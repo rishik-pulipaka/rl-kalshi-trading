@@ -36,11 +36,15 @@ for a system meant to run unattended for weeks:
 
 1. **Exponential backoff with jitter.** The old loop retried on a flat 3-second
    sleep, so every retry after a blip lands in the same instant.
-2. **Per-market resync instead of a full teardown.** Order-book sequence numbers
-   are per-market. The old code dropped the whole connection on any single
-   market's gap -- fine with one market subscribed, catastrophic across thousands
-   where some market is always gapping. Here a gap re-snapshots that one market
-   and the connection stays up.
+2. **Resync without dropping the connection.** The old code tore down the whole
+   socket on any order-book sequence gap. Here a gap re-subscribes the affected
+   markets to pull fresh snapshots while the connection stays up -- which also
+   keeps the broad tier flowing, since the two tiers share one socket.
+
+   Note the sequence counter is **connection-wide, not per-market** (measured;
+   see `kalshi/books.py`), so a gap does not identify which market lost a
+   message and the whole depth tier must be re-snapshotted. That is affordable
+   only because the depth tier is small, which is one more reason to keep it so.
 
 Read-only: this subscribes to public market-data channels and never sends an
 order command. See `kalshi/rest.py` for the same guarantee over HTTP.
@@ -164,9 +168,16 @@ class Stream:
         self._depth_pending -= drop
         self._depth_live -= drop
 
-    def request_resync(self, ticker):
-        """Flag one market whose order book desynced; re-snapshot it alone."""
-        self._resync_queue.add(ticker)
+    def request_resync(self, tickers):
+        """Queue markets for a fresh order-book snapshot.
+
+        Accepts one ticker or many. A connection-wide sequence gap invalidates
+        every book at once (see `kalshi/books.py`), so the common case is
+        re-snapshotting the entire depth tier.
+        """
+        if isinstance(tickers, str):
+            tickers = (tickers,)
+        self._resync_queue.update(t for t in tickers if t)
 
     async def _drain_pending(self):
         """Push queued depth subscriptions and resyncs onto the socket.
