@@ -79,17 +79,34 @@ def test_a_gap_notifies_the_resync_callback_with_every_ticker():
 
 # ---------- snapshots ----------
 
-def test_a_snapshot_resets_the_sequence_rather_than_being_checked():
-    """Kalshi restarts the counter after a resubscribe.
+def test_new_subscriptions_mid_stream_do_not_desync_everything():
+    """Snapshots share the connection-wide sequence; they do not restart it.
 
-    Treating that restart as a gap would trigger another resync, which triggers
-    another restart -- a loop that never converges.
+    Agents pull new markets into depth continuously. Treating each new batch of
+    snapshots as a sequence reset made the next delta for an existing market
+    look like a gap, and on a live run that left 3,113 books held and ZERO
+    synced -- the depth tier permanently stale, with every fill silently falling
+    back to top-of-book.
     """
-    r = _synced(("A",))
-    r.on_message(delta(2, "A"))
-    assert r.on_message(snapshot(1, "A")) is False    # counter went backwards
+    r = _synced(("A", "B"))              # snapshots at seq 1, 2
+    assert r.on_message(delta(3, "A")) is False
+
+    # A third market is subscribed; its snapshot continues the same sequence.
+    assert r.on_message(snapshot(4, "C")) is False
     assert r.gaps == 0
-    assert r.last_seq == 1
+
+    # And the existing books are still usable.
+    assert r.on_message(delta(5, "B")) is False
+    assert r.get("A") is not None and r.get("B") is not None
+    assert r.get("C") is not None
+
+
+def test_a_snapshot_arriving_on_a_gap_still_rebases_its_own_market():
+    """The snapshot is ground truth for its market whatever happened around it."""
+    r = _synced(("A", "B"))
+    assert r.on_message(snapshot(99, "A")) is True    # gap: 2 -> 99
+    assert r.get("A") is not None                     # A was re-based
+    assert r.get("B") is None                         # B is now suspect
 
 
 def test_a_snapshot_makes_a_book_readable():
@@ -132,11 +149,46 @@ def test_a_delta_for_a_desynced_book_is_dropped():
     assert r.get("A") is None                     # still not readable
 
 
-def test_deltas_advance_the_shared_counter():
+def test_deltas_advance_the_counter_for_their_subscription():
     r = _synced(("A", "B"))
     r.on_message(delta(3, "A"))
     r.on_message(delta(4, "B"))
-    assert r.last_seq == 4
+    assert r.last_seq[None] == 4
+
+
+def test_each_subscription_has_its_own_counter():
+    """Kalshi gives every subscribe command its own sid and its own sequence.
+
+    A second subscription starting at seq 1 must not look like the first one
+    jumping backwards -- that misreading left a live run with 3,000+ books held
+    and zero synced.
+    """
+    r = BookRegistry()
+    r.on_message(dict(snapshot(1, "A"), sid=1))
+    r.on_message(dict(delta(2, "A"), sid=1))
+    # A different subscription, its own counter starting over.
+    assert r.on_message(dict(snapshot(1, "B"), sid=7)) is False
+    assert r.gaps == 0
+    assert r.get("A") is not None and r.get("B") is not None
+
+
+def test_a_subscribed_acknowledgement_consumes_a_sequence_number():
+    """It does, and swallowing it makes the next data frame look like a loss."""
+    r = BookRegistry()
+    r.on_message(dict(snapshot(1, "A"), sid=1))
+    r.on_message({"type": "subscribed", "sid": 1, "seq": 2})
+    assert r.on_message(dict(delta(3, "A"), sid=1)) is False
+    assert r.gaps == 0
+
+
+def test_another_channels_sequence_does_not_disturb_the_books():
+    """The broad tier runs its own sids; those counters are unrelated."""
+    r = BookRegistry()
+    r.on_message(dict(snapshot(100, "A"), sid=1))
+    r.on_message({"type": "ticker", "sid": 2, "seq": 1})
+    assert r.on_message(dict(delta(101, "A"), sid=1)) is False
+    assert r.gaps == 0
+    assert r.get("A") is not None
 
 
 # ---------- lifecycle ----------
@@ -146,7 +198,7 @@ def test_reset_drops_everything_for_a_reconnect():
     r = _synced(("A", "B"))
     r.reset()
     assert r.books == {}
-    assert r.last_seq is None
+    assert r.last_seq == {}
 
 
 def test_forget_drops_only_the_named_markets():

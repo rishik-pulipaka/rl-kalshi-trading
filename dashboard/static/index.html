@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>South Park Agents</title>
+<style>
+:root{
+  --bg:#0e1116; --panel:#161b22; --panel2:#1c232c; --line:#2b3441;
+  --text:#e6edf3; --dim:#8b98a5; --faint:#5c6773;
+  --up:#3fb950; --down:#f85149; --accent:#58a6ff; --warn:#d29922;
+  --stan:#58a6ff; --kyle:#3fb950; --cartman:#f0883e; --kenny:#bc8cff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+header{display:flex;align-items:center;gap:16px;padding:10px 18px;
+  background:var(--panel);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:20;flex-wrap:wrap}
+h1{font-size:14px;margin:0;letter-spacing:.5px}
+h1 span{color:var(--faint);font-weight:400}
+.pill{padding:2px 8px;border-radius:10px;background:var(--panel2);
+  border:1px solid var(--line);font-size:11px;color:var(--dim)}
+.pill.ok{color:var(--up);border-color:#1c3a24}
+.pill.bad{color:var(--down);border-color:#4a2224}
+.spacer{flex:1}
+button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+  padding:5px 12px;border-radius:5px;cursor:pointer;font:inherit;font-size:12px}
+button:hover{border-color:var(--accent)}
+button.danger{border-color:#4a2224;color:var(--down)}
+button.active{background:var(--accent);color:#0b0f14;border-color:var(--accent)}
+nav{display:flex;gap:4px;padding:8px 18px;background:var(--panel);
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+main{padding:18px;max-width:1500px}
+.grid{display:grid;gap:14px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
+.card h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;
+  letter-spacing:1px;color:var(--faint);font-weight:600}
+.big{font-size:26px;font-weight:600;letter-spacing:-.5px}
+.sub{color:var(--dim);font-size:11px;margin-top:3px}
+.up{color:var(--up)} .down{color:var(--down)} .dim{color:var(--dim)}
+.faint{color:var(--faint)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;color:var(--faint);font-weight:600;padding:6px 8px;
+  border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;
+  letter-spacing:.6px;position:sticky;top:0;background:var(--panel)}
+td{padding:5px 8px;border-bottom:1px solid #1b222b;white-space:nowrap}
+tr:hover td{background:var(--panel2)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.scroll{max-height:520px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;
+  background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+.tag.yes{color:var(--up);border-color:#1c3a24}
+.tag.no{color:var(--down);border-color:#4a2224}
+.tag.explore{color:var(--warn);border-color:#463a15}
+.tag.skip{color:var(--faint)}
+.bar{height:7px;background:var(--panel2);border-radius:4px;overflow:hidden;min-width:60px}
+.bar>i{display:block;height:100%;background:var(--accent)}
+.agentbtn{border-left:3px solid transparent}
+.agentbtn[data-a=stan]{border-left-color:var(--stan)}
+.agentbtn[data-a=kyle]{border-left-color:var(--kyle)}
+.agentbtn[data-a=cartman]{border-left-color:var(--cartman)}
+.agentbtn[data-a=kenny]{border-left-color:var(--kenny)}
+.view{display:none} .view.on{display:block}
+.muted{color:var(--faint);padding:24px;text-align:center}
+svg{display:block;width:100%}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--dim);margin-top:6px;flex-wrap:wrap}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}
+.wbar{display:flex;align-items:center;gap:8px}
+.wbar .track{flex:1;height:9px;background:var(--panel2);border-radius:4px;
+  position:relative;overflow:hidden}
+.wbar .track>i{position:absolute;top:0;height:100%;background:var(--accent)}
+.wbar .track>i.neg{background:var(--down)}
+.note{color:var(--faint);font-size:11px;margin:10px 0 0}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SOUTH PARK AGENTS <span>· simulated money · real Kalshi prices</span></h1>
+  <span class="pill" id="p-stream">stream …</span>
+  <span class="pill" id="p-universe">universe …</span>
+  <span class="pill" id="p-mem">…</span>
+  <span class="spacer"></span>
+  <span class="pill" id="p-paused" style="display:none">PAUSED</span>
+  <button id="killbtn" class="danger">Pause all agents</button>
+</header>
+
+<nav>
+  <span id="agentbtns"></span>
+  <span style="width:18px"></span>
+  <button data-v="overview" class="tab active">Overview</button>
+  <button data-v="activity" class="tab">Activity</button>
+  <button data-v="memory"   class="tab">Memory bank</button>
+  <button data-v="analytics" class="tab">Analytics</button>
+  <button data-v="h2h"      class="tab">Head-to-head</button>
+</nav>
+
+<main>
+  <section id="v-overview" class="view on"></section>
+  <section id="v-activity" class="view"></section>
+  <section id="v-memory"   class="view"></section>
+  <section id="v-analytics" class="view"></section>
+  <section id="v-h2h"      class="view"></section>
+</main>
+
+<script>
+const COLORS = {stan:'#58a6ff', kyle:'#3fb950', cartman:'#f0883e', kenny:'#bc8cff'};
+let STATE = null, AGENT = null, VIEW = 'overview';
+
+const $ = s => document.querySelector(s);
+const el = (t, c, h) => { const e=document.createElement(t); if(c)e.className=c;
+  if(h!==undefined)e.innerHTML=h; return e; };
+const money = v => v===null||v===undefined ? '—'
+  : (v<0?'-$':'$') + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const pct = v => v===null||v===undefined ? '—' : (100*v).toFixed(1)+'%';
+const cents = v => v===null||v===undefined ? '—' : (100*v).toFixed(1)+'¢';
+const sign = v => v===null||v===undefined ? '' : (v>0?'up':(v<0?'down':''));
+const ago = ts => { if(!ts) return '—';
+  const s = Date.now()/1000 - ts;
+  if(s<60) return Math.round(s)+'s'; if(s<3600) return Math.round(s/60)+'m';
+  if(s<86400) return Math.round(s/3600)+'h'; return Math.round(s/86400)+'d'; };
+const esc = s => (s??'').toString().replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+
+async function get(u){ const r = await fetch(u); return r.ok ? r.json() : null; }
+
+/* ---------------- polling ---------------- */
+
+async function poll(){
+  const s = await get('/api/state');
+  if(!s) return;
+  STATE = s;
+  if(!AGENT && s.agents.length) AGENT = s.agents[0].agent;
+  renderHeader();
+  renderAgentButtons();
+  if(VIEW==='overview') renderOverview();
+  if(VIEW==='h2h') renderH2H();
+}
+
+function renderHeader(){
+  const st = STATE.stream, u = STATE.universe;
+  $('#p-stream').textContent = st.connected
+    ? `stream up · ${st.messages.toLocaleString()} msgs · ${st.reconnects} reconnects`
+    : 'stream DOWN';
+  $('#p-stream').className = 'pill ' + (st.connected?'ok':'bad');
+  $('#p-universe').textContent =
+    `${u.markets.toLocaleString()} markets · ${u.tradeable.toLocaleString()} tradeable`;
+  const rt = STATE.runtime;
+  $('#p-mem').textContent =
+    `${Math.round(rt.rss_mb||0)} MB · ${(rt.disk_free_gb||0).toFixed(0)} GB free`;
+  $('#p-paused').style.display = STATE.paused ? '' : 'none';
+  $('#killbtn').textContent = STATE.paused ? 'Resume agents' : 'Pause all agents';
+}
+
+function renderAgentButtons(){
+  const box = $('#agentbtns');
+  if(box.childElementCount === STATE.agents.length) {
+    [...box.children].forEach(b =>
+      b.classList.toggle('active', b.dataset.a===AGENT));
+    return;
+  }
+  box.innerHTML='';
+  STATE.agents.forEach(a=>{
+    const b = el('button','agentbtn'+(a.agent===AGENT?' active':''), a.display_name);
+    b.dataset.a = a.agent;
+    b.onclick = ()=>{ AGENT=a.agent; renderAgentButtons(); show(VIEW); };
+    box.appendChild(b);
+  });
+}
+
+const agentOf = n => STATE.agents.find(a=>a.agent===n);
+
+/* ---------------- overview ---------------- */
+
+function renderOverview(){
+  const a = agentOf(AGENT); if(!a) return;
+  const v = $('#v-overview');
+  const pnl = a.all_time_realized, today = a.realized_today;
+  v.innerHTML = '';
+
+  const cards = el('div','grid cards');
+  cards.append(
+    card('Equity', money(a.equity), `bankroll ${money(a.bankroll)} · ${money(a.exposure)} at risk`),
+    card('All-time P&amp;L', money(pnl), `peak ${money(a.peak_equity)} · drawdown ${pct(a.drawdown)}`, sign(pnl)),
+    card("Today's P&amp;L", money(today), `${a.trades_today} trades today`, sign(today)),
+    card('Win rate', a.win_rate===null?'no data yet':pct(a.win_rate),
+         `${a.wins}W / ${a.losses}L · ${a.open_positions} open`),
+    card(a.sleep.asleep?'Asleep':'Awake',
+         a.sleep.asleep?'💤':'●',
+         `window ${a.sleep.window_start}–${a.sleep.window_end} · ${a.sleep.awake_hours}h awake/day`
+         + (a.sleep.skipped_sleep?' · skipped tonight':'')),
+    card('Learning', `${a.policy.updates}`,
+         `weight updates · ${pct(a.policy.exploration_rate)} explored · `
+         + `error ${a.policy.mean_abs_error===null?'—':a.policy.mean_abs_error.toFixed(3)}`),
+    card('Memory', `${a.memory.patterns}`,
+         `patterns · ${a.memory.encounters} encounters`),
+    card('Bankruptcies', `${a.bankruptcies}`, `fees paid ${money(a.total_fees)}`,
+         a.bankruptcies?'down':''),
+  );
+  v.append(el('div','sub', esc(a.blurb)), cards);
+
+  const holder = el('div','card');
+  holder.append(el('h3',null,'Open positions <span class="faint">— unrealized, not yet counted</span>'));
+  const wrap = el('div','scroll'); holder.append(wrap); v.append(el('div','grid',''), holder);
+  get('/api/positions/'+AGENT).then(rows=>{
+    if(!rows || !rows.length){
+      wrap.append(el('div','muted','Nothing open right now.')); return; }
+    wrap.append(table(
+      ['Market','Side','Qty','Entry','Now','Cost','Unrealized','Size','Held','Closes'],
+      rows.map(r=>[
+        esc(r.ticker), tag(r.side, r.side), r.contracts,
+        cents(r.entry_price), cents(r.current_price), money(r.cost),
+        [money(r.unrealized_pnl), sign(r.unrealized_pnl)],
+        pct(r.stake_fraction), ago(r.opened_at),
+        r.close_ts? ago(r.close_ts).replace('-','') : '—',
+      ]), [0,0,1,1,1,1,1,1,1,1]));
+  });
+}
+
+function card(title, big, sub, cls){
+  const c = el('div','card');
+  c.append(el('h3',null,title), el('div','big '+(cls||''), big), el('div','sub', sub));
+  return c;
+}
+function tag(text, kind){ return `<span class="tag ${kind||''}">${esc(text)}</span>`; }
+
+function table(headers, rows, numeric){
+  const t = el('table');
+  const thead = el('thead'); const hr = el('tr');
+  headers.forEach((h,i)=>{ const th=el('th',numeric&&numeric[i]?'num':'',h); hr.append(th); });
+  thead.append(hr); t.append(thead);
+  const tb = el('tbody');
+  rows.forEach(cells=>{
+    const tr = el('tr');
+    cells.forEach((c,i)=>{
+      const [val, cls] = Array.isArray(c) ? c : [c, ''];
+      tr.append(el('td', (numeric&&numeric[i]?'num ':'')+cls, val));
+    });
+    tb.append(tr);
+  });
+  t.append(tb); return t;
+}
+
+/* ---------------- activity ---------------- */
+
+async function renderActivity(){
+  const v = $('#v-activity'); v.innerHTML = '<div class="muted">loading…</div>';
+  const d = await get('/api/activity/'+AGENT);
+  v.innerHTML='';
+  if(!d){ v.append(el('div','muted','No data.')); return; }
+
+  const trades = el('div','card');
+  trades.append(el('h3',null,'Positions'));
+  const tw = el('div','scroll'); trades.append(tw);
+  if(!d.positions.length) tw.append(el('div','muted','No trades yet.'));
+  else tw.append(table(
+    ['Opened','Market','Cat','Side','Qty','Entry','Exit','P&L','Result','Q','Mode'],
+    d.positions.map(r=>[
+      ago(r.opened_at), esc(r.title||r.ticker), esc(r.category||'—'),
+      tag(r.side,r.side), r.contracts, cents(r.entry_price), cents(r.exit_price),
+      [money(r.realized_pnl), sign(r.realized_pnl)],
+      r.result?tag(r.result, r.result==='win'?'yes':(r.result==='loss'?'no':'')):'open',
+      r.q_at_entry===null?'—':r.q_at_entry.toFixed(3),
+      r.explored?tag('explore','explore'):tag('exploit'),
+    ]), [0,0,0,0,1,1,1,1,0,1,0]));
+  v.append(trades);
+
+  const dec = el('div','card'); dec.style.marginTop='14px';
+  dec.append(el('h3',null,'Every decision <span class="faint">— including deliberate non-actions</span>'));
+  const dw = el('div','scroll'); dec.append(dw);
+  if(!d.decisions.length) dw.append(el('div','muted','No decisions logged yet.'));
+  else dw.append(table(
+    ['When','Action','Market','Cat','Q','Best Q','Looked at'],
+    d.decisions.map(r=>[
+      ago(r.ts),
+      r.acted ? (r.explored?tag('explored','explore'):tag('acted','yes'))
+              : tag(r.reason||'skipped','skip'),
+      esc(r.ticker||'—'), esc(r.category||'—'),
+      r.q===null?'—':r.q.toFixed(3), r.best_q===null?'—':r.best_q.toFixed(3),
+      r.considered,
+    ]), [0,0,0,0,1,1,1]));
+  v.append(dec);
+
+  if(d.events.length){
+    const ev = el('div','card'); ev.style.marginTop='14px';
+    ev.append(el('h3',null,'Events'));
+    ev.append(table(['When','Kind','Detail'],
+      d.events.map(r=>[ago(r.ts), esc(r.kind), esc(JSON.stringify(r.detail||{}))])));
+    v.append(ev);
+  }
+}
+
+/* ---------------- memory bank ---------------- */
+
+let MEMKIND='', MEMORDER='encounters';
+
+async function renderMemory(){
+  const v = $('#v-memory'); v.innerHTML='<div class="muted">loading…</div>';
+  const d = await get(`/api/memory/${AGENT}?kind=${MEMKIND}&order=${MEMORDER}&limit=120`);
+  v.innerHTML='';
+  if(!d || d.error){ v.append(el('div','muted','No memory yet.')); return; }
+
+  const head = el('div','card');
+  head.append(el('h3',null,'Memory bank <span class="faint">— what this agent has learned, and how strongly</span>'));
+  const controls = el('div'); controls.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px';
+  const kinds = [['','all'],['category_side','category+side'],['series_side','series+side'],
+                 ['series_price','series+price+side'],['entity_side','entity+side'],
+                 ['ttr','time to close'],['price','price band']];
+  kinds.forEach(([k,label])=>{
+    const b = el('button', MEMKIND===k?'active':'', label);
+    b.onclick=()=>{ MEMKIND=k; renderMemory(); }; controls.append(b);
+  });
+  const sortWrap = el('span'); sortWrap.style.marginLeft='12px';
+  [['encounters','most seen'],['net_pnl','most profitable'],['last_seen','most recent']]
+    .forEach(([o,label])=>{
+      const b = el('button', MEMORDER===o?'active':'', label);
+      b.onclick=()=>{ MEMORDER=o; renderMemory(); }; sortWrap.append(b);
+    });
+  controls.append(sortWrap);
+  head.append(controls);
+  head.append(el('div','sub',
+    `${d.stats.patterns} patterns · ${d.stats.encounters} total encounters`));
+  v.append(head);
+
+  const box = el('div','card'); box.style.marginTop='14px';
+  const wrap = el('div','scroll'); box.append(wrap);
+  if(!d.beliefs.length){
+    wrap.append(el('div','muted','Nothing remembered yet — the agent has not resolved a trade.'));
+  } else {
+    wrap.append(table(
+      ['Pattern','Kind','Seen','W/L','Win rate','Confidence','Avg entry','Net P&L','ROI','Recency'],
+      d.beliefs.map(b=>[
+        esc(b.label), `<span class="tag">${esc(b.kind)}</span>`, b.encounters,
+        `${b.wins}/${b.losses}`,
+        b.win_rate===null?'—':pct(b.win_rate),
+        confBar(b.confidence),
+        cents(b.avg_entry_price),
+        [money(b.net_pnl), sign(b.net_pnl)],
+        [b.roi===null?'—':pct(b.roi), sign(b.roi)],
+        [b.ewma_return===null?'—':b.ewma_return.toFixed(2), sign(b.ewma_return)],
+      ]), [0,0,1,1,1,0,1,1,1,1]));
+  }
+  v.append(box);
+  v.append(el('p','note',
+    'Confidence is n/(n+10) over resolved encounters — it separates “60% over 3 tries” '
+    + 'from “60% over 200 tries”. A high win rate with negative ROI means small wins '
+    + 'and large losses.'));
+}
+
+function confBar(c){
+  return `<div class="bar" title="${(c*100).toFixed(0)}%"><i style="width:${Math.round(c*100)}%"></i></div>`;
+}
+
+/* ---------------- analytics ---------------- */
+
+async function renderAnalytics(){
+  const v = $('#v-analytics'); v.innerHTML='<div class="muted">loading…</div>';
+  const d = await get('/api/analytics/'+AGENT);
+  v.innerHTML='';
+  if(!d){ v.append(el('div','muted','No data.')); return; }
+
+  const g = el('div','grid'); g.style.gridTemplateColumns='repeat(auto-fit,minmax(430px,1fr))';
+
+  g.append(chartCard('Equity over time', d.daily.length<2
+    ? null : lineChart(d.daily.map(r=>r.equity ?? r.bankroll), COLORS[AGENT]),
+    'One point per trading day. This is the learning curve — is it improving?'));
+
+  g.append(chartCard('Daily reward', d.daily.length<2
+    ? null : barChart(d.daily.map(r=>r.reward||0)),
+    'The shaped score from PRD §5: P&L, drawdown, overtrading, inaction.'));
+
+  g.append(chartCard('Calibration', d.calibration.length
+    ? calibrationChart(d.calibration) : null,
+    'When it bets at an implied X%, does it win X%? The diagonal is perfect.'));
+
+  g.append(chartCard('Exploration vs exploitation', d.exploration.length
+    ? lineChart(d.exploration.map(r=>r.total? r.explored/r.total : 0), '#d29922', 0, 1)
+    : null, 'Fraction of acted-on decisions that were exploratory.'));
+
+  v.append(g);
+
+  const cats = el('div','card'); cats.style.marginTop='14px';
+  cats.append(el('h3',null,'Market preference <span class="faint">— which markets does it gravitate toward?</span>'));
+  if(!d.categories.length) cats.append(el('div','muted','No positions yet.'));
+  else {
+    const total = d.categories.reduce((s,c)=>s+c.n,0)||1;
+    cats.append(table(['Category','Positions','Share','Win rate','P&L'],
+      d.categories.map(c=>[
+        esc(c.category||'—'), c.n,
+        `<div class="bar"><i style="width:${Math.round(100*c.n/total)}%"></i></div>`,
+        c.win_rate===null?'—':pct(c.win_rate),
+        [money(c.pnl), sign(c.pnl)],
+      ]), [0,1,0,1,1]));
+  }
+  v.append(cats);
+
+  const extra = el('div','grid cards'); extra.style.marginTop='14px';
+  extra.append(
+    card('Longest win streak', d.streaks.longest_win, 'consecutive winning positions'),
+    card('Longest losing streak', d.streaks.longest_loss, 'consecutive losers'),
+    card('Avg hold time', d.hold_times.mean_seconds===null?'—'
+      : humanDur(d.hold_times.mean_seconds), `${d.hold_times.n} closed positions`),
+    card('Bet sizes', d.bet_sizes.length? money(median(d.bet_sizes)) : '—',
+      `median of ${d.bet_sizes.length} bets`),
+  );
+  v.append(extra);
+
+  const w = el('div','card'); w.style.marginTop='14px';
+  w.append(el('h3',null,'Learned weights <span class="faint">— the entire model, readable</span>'));
+  const entries = Object.entries(d.weights).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+  const max = Math.max(...entries.map(e=>Math.abs(e[1])), 0.01);
+  entries.forEach(([name,val])=>{
+    const row = el('div','wbar'); row.style.margin='4px 0';
+    row.append(el('span',null,`<span style="display:inline-block;width:190px">${esc(name)}</span>`));
+    const track = el('div','track');
+    const i = el('i', val<0?'neg':'');
+    const width = Math.abs(val)/max*50;
+    i.style.width = width+'%';
+    i.style.left = val<0 ? (50-width)+'%' : '50%';
+    track.append(i); row.append(track);
+    row.append(el('span','num'+(val>0?' up':(val<0?' down':'')),
+      `<span style="display:inline-block;width:70px;text-align:right">${val.toFixed(4)}</span>`));
+    w.append(row);
+  });
+  w.append(el('p','note','Every prediction is the sum of weight × feature value. '
+    + 'Nothing hidden — this table is the whole model.'));
+  v.append(w);
+}
+
+function median(a){ if(!a.length) return null; const s=[...a].sort((x,y)=>x-y);
+  return s[Math.floor(s.length/2)]; }
+function humanDur(s){ if(s<60) return Math.round(s)+'s'; if(s<3600) return (s/60).toFixed(1)+'m';
+  if(s<86400) return (s/3600).toFixed(1)+'h'; return (s/86400).toFixed(1)+'d'; }
+
+function chartCard(title, svg, note){
+  const c = el('div','card');
+  c.append(el('h3',null,title));
+  if(svg) c.append(svg); else c.append(el('div','muted','Not enough data yet.'));
+  if(note) c.append(el('p','note',note));
+  return c;
+}
+
+function lineChart(values, color, forceMin, forceMax){
+  const W=460,H=150,P=26;
+  const min = forceMin!==undefined?forceMin:Math.min(...values);
+  const max = forceMax!==undefined?forceMax:Math.max(...values);
+  const span = (max-min)||1;
+  const x = i => P + i*(W-2*P)/Math.max(values.length-1,1);
+  const y = v => H-P - ((v-min)/span)*(H-2*P);
+  const d = values.map((v,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  return svgEl(`<svg viewBox="0 0 ${W} ${H}">
+    <line x1="${P}" y1="${H-P}" x2="${W-P}" y2="${H-P}" stroke="#2b3441"/>
+    <line x1="${P}" y1="${P}" x2="${P}" y2="${H-P}" stroke="#2b3441"/>
+    <path d="${d}" fill="none" stroke="${color}" stroke-width="1.8"/>
+    <text x="2" y="${P+4}" fill="#5c6773" font-size="9">${max.toFixed(2)}</text>
+    <text x="2" y="${H-P}" fill="#5c6773" font-size="9">${min.toFixed(2)}</text>
+  </svg>`);
+}
+
+function barChart(values){
+  const W=460,H=150,P=26;
+  const max = Math.max(...values.map(Math.abs),0.01);
+  const bw = (W-2*P)/values.length;
+  const zero = H/2;
+  const bars = values.map((v,i)=>{
+    const h = Math.abs(v)/max*(H/2-P);
+    const yy = v>=0 ? zero-h : zero;
+    return `<rect x="${(P+i*bw).toFixed(1)}" y="${yy.toFixed(1)}" width="${Math.max(bw-1,1).toFixed(1)}"
+      height="${Math.max(h,0.5).toFixed(1)}" fill="${v>=0?'#3fb950':'#f85149'}"/>`;
+  }).join('');
+  return svgEl(`<svg viewBox="0 0 ${W} ${H}">
+    <line x1="${P}" y1="${zero}" x2="${W-P}" y2="${zero}" stroke="#2b3441"/>
+    ${bars}</svg>`);
+}
+
+function calibrationChart(points){
+  const W=460,H=150,P=26;
+  const x = v => P + v*(W-2*P);
+  const y = v => H-P - v*(H-2*P);
+  const dots = points.map(p=>
+    `<circle cx="${x(p.implied).toFixed(1)}" cy="${y(p.actual).toFixed(1)}"
+      r="${Math.min(3+Math.log1p(p.n),8).toFixed(1)}" fill="#58a6ff" opacity=".8"/>`).join('');
+  return svgEl(`<svg viewBox="0 0 ${W} ${H}">
+    <line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" stroke="#5c6773" stroke-dasharray="3,3"/>
+    <line x1="${P}" y1="${H-P}" x2="${W-P}" y2="${H-P}" stroke="#2b3441"/>
+    <line x1="${P}" y1="${P}" x2="${P}" y2="${H-P}" stroke="#2b3441"/>
+    ${dots}
+    <text x="${W-P-40}" y="${H-8}" fill="#5c6773" font-size="9">implied →</text>
+  </svg>`);
+}
+
+function svgEl(html){ const d=el('div'); d.innerHTML=html; return d.firstElementChild; }
+
+/* ---------------- head to head ---------------- */
+
+function renderH2H(){
+  const v = $('#v-h2h'); v.innerHTML='';
+  if(STATE.agents.length<2){
+    v.append(el('div','muted',
+      'Only one agent is running. Start with --agents all to compare all four.'));
+    return;
+  }
+  const box = el('div','card');
+  box.append(el('h3',null,'All four, side by side'));
+  box.append(table(
+    ['Agent','Equity','All-time P&L','Win rate','Trades','Open','Drawdown','Explored',
+     'Updates','Error','Bankrupt','Awake/day','Memory'],
+    STATE.agents.map(a=>[
+      `<span style="color:${COLORS[a.agent]||'#fff'}">${esc(a.display_name)}</span>`,
+      [money(a.equity), sign(a.equity-100)],
+      [money(a.all_time_realized), sign(a.all_time_realized)],
+      a.win_rate===null?'—':pct(a.win_rate),
+      a.trades_opened, a.open_positions, pct(a.drawdown),
+      pct(a.policy.exploration_rate), a.policy.updates,
+      a.policy.mean_abs_error===null?'—':a.policy.mean_abs_error.toFixed(3),
+      [a.bankruptcies, a.bankruptcies?'down':''],
+      a.sleep.awake_hours+'h', a.memory.patterns,
+    ]), [0,1,1,1,1,1,1,1,1,1,1,1,1]));
+  v.append(box);
+
+  const cfg = el('div','card'); cfg.style.marginTop='14px';
+  cfg.append(el('h3',null,'Why they differ <span class="faint">— config only, no code branches</span>'));
+  get('/api/agents').then(rows=>{
+    if(!rows) return;
+    cfg.append(table(
+      ['Agent','Personality','Explore','Threshold','Optimism','Memory recency','Bet size','Exposure penalty'],
+      rows.map(r=>[
+        `<span style="color:${COLORS[r.name]||'#fff'}">${esc(r.display_name)}</span>`,
+        `<span class="dim">${esc(r.blurb)}</span>`,
+        pct(r.epsilon), r.act_threshold.toFixed(2), r.optimism.toFixed(2),
+        r.memory_ewma_alpha.toFixed(2),
+        `${(100*r.bet_size_range[0]).toFixed(0)}–${(100*r.bet_size_range[1]).toFixed(0)}%`,
+        r.reward.exposure_penalty.toFixed(2),
+      ]), [0,0,1,1,1,1,1,1]));
+  });
+  v.append(cfg);
+}
+
+/* ---------------- wiring ---------------- */
+
+function show(view){
+  VIEW = view;
+  document.querySelectorAll('.tab').forEach(b=>
+    b.classList.toggle('active', b.dataset.v===view));
+  document.querySelectorAll('.view').forEach(s=>s.classList.remove('on'));
+  $('#v-'+view).classList.add('on');
+  if(view==='overview') renderOverview();
+  if(view==='activity') renderActivity();
+  if(view==='memory') renderMemory();
+  if(view==='analytics') renderAnalytics();
+  if(view==='h2h') renderH2H();
+}
+
+document.querySelectorAll('.tab').forEach(b=> b.onclick=()=>show(b.dataset.v));
+
+$('#killbtn').onclick = async ()=>{
+  await fetch('/api/kill',{method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'toggle'})});
+  poll();
+};
+
+poll();
+setInterval(poll, 4000);
+</script>
+</body>
+</html>

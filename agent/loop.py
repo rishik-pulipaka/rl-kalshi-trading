@@ -41,6 +41,23 @@ destroying the agent:
 The minimum hold is also PRD 4's hold-time trait made mechanical: Kenny's is ten
 minutes and Kyle's is six hours.
 
+## Depth is requested for what the agent looks at, not just what it holds
+
+The broad WebSocket tier carries prices for every market but the `ticker` frame
+for any given market may not have arrived yet, and the REST sweep does not carry
+sizes at all. So an agent evaluating a market usually has a price and no idea
+how much is available at it.
+
+`sim.fills` refuses to invent liquidity, which is correct -- but it means the
+agent must actively pull a market's ladder into the depth tier before it can
+trade it. Requesting depth only for *held* markets deadlocks: nothing can be
+held until something fills, and nothing can fill without depth. So every market
+an agent seriously considers gets subscribed, and it becomes tradeable a tick
+later when its snapshot lands.
+
+This is also what makes the depth tier track real attention rather than a
+hand-picked list.
+
 ## Learning happens on resolution, not on entry
 
 Each position carries the feature vector from the moment it was opened. When it
@@ -134,23 +151,50 @@ class Agent:
     def build_candidates(self, universe, books=None, now=None):
         """Sample markets and turn them into scored-able candidates.
 
-        Sampling rather than scoring all ~94k tradeable markets every minute:
-        the point is a decision per tick, and a uniform sample over the whole
-        universe preserves market freedom exactly (PRD 2) while costing a
-        constant amount of work. No category is favoured or excluded -- which is
-        what makes "which markets does this agent gravitate toward" a real
-        question rather than a consequence of how we sampled.
+        Sampling rather than scoring all ~100k tradeable markets every minute:
+        the point is a decision per tick, and it costs a constant amount of work.
+
+        The sample is split between markets whose order book we already hold and
+        markets we have never looked at. Purely uniform sampling was tried on
+        live data and it starved the agent: with 99,722 tradeable markets and 40
+        drawn per minute, a market already carrying depth is essentially never
+        drawn twice, so seven of every eight decisions died with "no_liquidity"
+        before anything could fill.
+
+        The split is a working set, not a restriction. Any market can enter it
+        -- the discovery half is drawn uniformly across the entire universe with
+        no category filter -- so "which markets does this agent gravitate
+        toward" stays a real question about the agent rather than an artifact of
+        how we sampled. What the split buys is that the agent always has some
+        candidates it can actually act on.
         """
         pool = universe.tradeable(now)
         if not pool:
             return []
 
-        n = min(self.p.trading.candidates_per_decision, len(pool))
-        sampled = self.rng.sample(pool, n)
+        budget = self.p.trading.candidates_per_decision
+        sampled = []
+
+        # Half the budget on markets we can trade right now.
+        if books is not None:
+            ready = [m for m in pool if books.has_depth(m.ticker)]
+            if ready:
+                take = min(budget // 2, len(ready))
+                sampled.extend(self.rng.sample(ready, take))
+
+        # The rest on discovery, drawn from the whole universe. This is what
+        # keeps market freedom real and what grows the working set over time.
+        remaining = min(budget - len(sampled), len(pool))
+        if remaining > 0:
+            sampled.extend(self.rng.sample(pool, remaining))
 
         held = {p.ticker for p in self.portfolio.open_positions()}
         candidates = []
+        seen = set()
         for market in sampled:
+            if market.ticker in seen:
+                continue        # the two samples can overlap
+            seen.add(market.ticker)
             if market.ticker in held:
                 continue        # already exposed here; exits are handled separately
             seconds = market.seconds_to_close(now)
@@ -158,6 +202,16 @@ class Agent:
                 continue        # too close to resolution to enter meaningfully
 
             has_depth = bool(books and books.has_depth(market.ticker))
+            if not has_depth:
+                # Ask for this market's ladder so a later tick can actually fill
+                # it. Without this the agent deadlocks: the REST sweep gives
+                # prices but not sizes, most markets have not had a `ticker`
+                # frame yet, and depth was only ever requested for markets
+                # already held -- which cannot happen until something fills. On
+                # the first live run every single decision died with
+                # "no_liquidity" for exactly this reason.
+                self.depth_wanted.add(market.ticker)
+
             for side in (YES, NO):
                 vector = feat.build(market, side, memory=self.memory,
                                     has_depth=has_depth, now=now)
@@ -208,6 +262,11 @@ class Agent:
         fill = fills.buy(levels, wanted, candidate.side)
 
         if not fill.filled or not self.portfolio.can_afford(fill.cost):
+            if not fill.filled:
+                # Either the size is genuinely not there, or we are looking at a
+                # market whose ladder has not arrived yet. Ask for it either
+                # way; the request is idempotent and costs one subscribe.
+                self.depth_wanted.add(market.ticker)
             decision.candidate = None
             decision.skipped_reason = ("no_liquidity" if not fill.filled
                                        else "insufficient_funds")

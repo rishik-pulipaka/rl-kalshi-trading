@@ -21,6 +21,36 @@ So gap detection belongs **here**, at the connection level, which is where Kalsh
 actually puts it. The registry owns one sequence counter; the books own only the
 ladder mutation.
 
+## What `seq` actually counts
+
+This took several wrong answers to pin down, so the evidence lives here rather
+than in a commit message.
+
+`seq` is a **connection-wide counter over every sequenced frame**, whatever
+channel or subscription it belongs to. It is not per market, and it is not per
+subscription -- `sid` merely labels which subscription a frame came from.
+
+The measurements that settle it:
+
+  - Subscribe to 8 markets with no other channels: snapshots arrive at seq 1-8,
+    then deltas continue 9, 10, 11 regardless of market. So: not per market.
+  - Add a second subscribe command: the acknowledgement itself consumes a seq,
+    and the following data frame continues the same run. So: not per
+    subscription, and control frames count.
+  - Run the full system: gaps appeared on sid=4 at seq 5,558 then 8,892 then
+    11,687, climbing to 1,062,749 in four minutes -- against 1,182,205 total
+    messages received. The order-book "sequence" was tracking the entire
+    connection's traffic, because `trade` and lifecycle frames consume numbers
+    too.
+
+So the registry must observe **every** sequenced frame, not just order-book
+ones. Feed it only order-book messages and it sees a gap on almost every
+delta, which is precisely what happened: a live run held 3,119 books with
+**zero** synced, every fill silently fell back to top-of-book instead of the
+real ladder, and the only symptom in the logs was a climbing gap count.
+
+`tools/probe_sequence.py` reproduces the measurement.
+
 ## What a real gap means
 
 A break in the connection-wide sequence means we missed a message, but the
@@ -52,8 +82,10 @@ class BookRegistry:
         self.books = {}
         self.on_desync = on_desync
 
-        # The connection-wide orderbook sequence. See the module docstring.
-        self.last_seq = None
+        # One sequence counter per subscription id. See the module docstring:
+        # each `subscribe` command gets its own sid and its own sequence, and
+        # the broad tier's subscriptions run their own counters in parallel.
+        self.last_seq = {}
         self.gaps = 0
         self.snapshots = 0
         self.deltas = 0
@@ -63,56 +95,72 @@ class BookRegistry:
     # ---------- ingest ----------
 
     def on_message(self, message):
-        """Apply one orderbook frame. Returns True if a gap was detected."""
+        """Apply one sequenced frame. Returns True if a gap was detected.
+
+        Every frame that carries a `seq` advances its sid's counter, including
+        `subscribed` acknowledgements -- those consume a sequence number, and
+        ignoring them makes the following data frame look like a loss.
+        """
         mtype = message.get("type")
         if mtype == "orderbook_snapshot":
             return self._on_snapshot(message)
         if mtype == "orderbook_delta":
             return self._on_delta(message)
+        # A frame from some other channel, or an acknowledgement. It still
+        # consumes a sequence number, so the counter has to follow it -- but it
+        # is never order-book evidence, and a gap detected here is somebody
+        # else's problem, not a reason to invalidate the books.
+        self._check_seq(message.get("sid"), message.get("seq"))
         return False
 
-    def _check_seq(self, seq):
-        """Track the connection-wide counter. True when a message was missed.
-
-        A snapshot resets the counter rather than being checked against it: after
-        a resubscribe Kalshi restarts the sequence, so treating that restart as a
-        gap would put us in a resync loop that never converges.
-        """
+    def _check_seq(self, sid, seq):
+        """Track one subscription's counter. True when a message was missed."""
         if seq is None:
             return False
-        if self.last_seq is not None and seq != self.last_seq + 1:
+        previous = self.last_seq.get(sid)
+        gapped = previous is not None and seq != previous + 1
+        if gapped:
             self.gaps += 1
             self.desynced_at = time.time()
-            return True
-        self.last_seq = seq
-        return False
+        self.last_seq[sid] = seq
+        return gapped
 
     def _on_snapshot(self, message):
+        """A fresh book for one market.
+
+        The snapshot is applied whatever happened around it -- it is ground
+        truth for its own market. A gap alongside it only invalidates the others.
+        """
         ticker = message["msg"].get("market_ticker")
         if not ticker:
             return False
+
+        gapped = self._check_seq(message.get("sid"), message.get("seq"))
+
         book = self.books.get(ticker)
         if book is None:
             book = self.books[ticker] = OrderBook()
         book.apply_snapshot(message)
-        # A snapshot is ground truth, so adopt its sequence rather than
-        # validating against the old one.
-        self.last_seq = message.get("seq", self.last_seq)
         self.snapshots += 1
         self.updated_at[ticker] = time.time()
-        return False
+
+        if gapped:
+            for other, other_book in self.books.items():
+                if other != ticker:
+                    other_book.synced = False
+            if self.on_desync:
+                self.on_desync([t for t in self.books if t != ticker])
+        return gapped
 
     def _on_delta(self, message):
         seq = message.get("seq")
-        gapped = self._check_seq(seq)
-        if gapped:
-            log.warning("orderbook sequence gap at seq=%s; depth tier is stale", seq)
-            if self.on_desync:
-                self.on_desync(list(self.books))
-            # Everything is suspect until fresh snapshots arrive.
+        if self._check_seq(message.get("sid"), seq):
+            log.warning("orderbook gap on sid=%s at seq=%s; depth tier stale",
+                        message.get("sid"), seq)
             for book in self.books.values():
                 book.synced = False
-            self.last_seq = seq
+            if self.on_desync:
+                self.on_desync(list(self.books))
             return True
 
         ticker = message["msg"].get("market_ticker")
@@ -123,10 +171,9 @@ class BookRegistry:
             return False
 
         # `OrderBook.apply_delta` re-checks the sequence per book, which is
-        # meaningless here (see the module docstring) and would reject nearly
-        # every delta. Align the book's counter so its check always passes and
-        # it does only what we want from it: mutate the ladder. Real gap
-        # detection already happened above, against the connection counter.
+        # meaningless here and would reject nearly every delta. Align its
+        # counter so it does only what we want: mutate the ladder. Real gap
+        # detection already happened above.
         book.last_seq = seq - 1
         book.apply_delta(message)
         self.deltas += 1
@@ -139,7 +186,7 @@ class BookRegistry:
         """Drop everything. Called on reconnect, when all books are invalid."""
         self.books.clear()
         self.updated_at.clear()
-        self.last_seq = None
+        self.last_seq.clear()
 
     def forget(self, tickers):
         for ticker in tickers:
@@ -169,6 +216,6 @@ class BookRegistry:
             "snapshots": self.snapshots,
             "deltas": self.deltas,
             "gaps": self.gaps,
-            "last_seq": self.last_seq,
+            "sids": len(self.last_seq),
             "desynced_at": self.desynced_at,
         }

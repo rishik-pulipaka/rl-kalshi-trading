@@ -263,6 +263,16 @@ class Stream:
             message = json.loads(raw)
             mtype = message.get("type")
             if mtype in CONTROL_TYPES:
+                # A control frame usually carries no sequence number -- but a
+                # `subscribed` acknowledgement DOES, and it consumes one.
+                # Swallowing it here makes the next data frame look like a gap,
+                # which is exactly what happened: every new depth subscription
+                # manufactured one phantom desync, and with agents subscribing
+                # continuously the whole depth tier sat permanently stale
+                # (3,000+ books held, zero synced). Forward anything sequenced
+                # so consumers can keep their counter aligned.
+                if message.get("seq") is not None:
+                    self.on_message(message)
                 continue
             if mtype == "error":
                 self.errors += 1
