@@ -1,0 +1,182 @@
+# Agent configuration.
+#
+# EVERY personality trait and reward weight lives in this file. There are no
+# per-agent code branches anywhere in the project -- all four agents run the
+# same policy, the same reward function, and the same decision loop. That is
+# what makes "the personalities are mechanical, not cosmetic" (PRD 4) a claim
+# you can actually check rather than take on faith.
+#
+# PRD 5 says outright that reward shaping will need adjustment once there is
+# real behaviour to look at, and predicts the agents will find at least one
+# loophole. Tuning happens here, not in the code.
+#
+# Money values are in DOLLARS in this file and converted on load. Everything
+# inside the running system is integer ten-thousandths (see sim/money.py).
+
+
+defaults:
+  starting_bankroll: 100.00
+
+  policy:
+    learning_rate: 0.01
+    epsilon: 0.15           # probability of exploring instead of exploiting
+    optimism: 0.15          # initial bias weight; solves the cold start
+    act_threshold: 0.0      # act only when predicted return beats this
+
+  memory:
+    ewma_alpha: 0.20        # how fast recent outcomes displace older ones
+
+  sizing:
+    # Bet size as a fraction of current bankroll, sampled per trade.
+    min_fraction: 0.02
+    max_fraction: 0.10
+    # Hard cap regardless of what the sampler returns -- a backstop against a
+    # config typo emptying an agent in one trade.
+    absolute_max_fraction: 0.35
+
+  trading:
+    decision_interval_seconds: 60     # how often the agent considers acting
+    candidates_per_decision: 40       # markets sampled from the universe per tick
+    max_open_positions: 25
+    min_seconds_to_close: 120         # do not enter a market about to close
+    exit_check_interval_seconds: 300  # how often to reconsider open positions
+    min_hold_seconds: 3600            # PRD 4's hold-time trait, and a churn guard
+    exit_margin: 0.15                 # how far Q must fall below entry to exit
+
+  reward:
+    pnl_scale: 1.0
+    loss_aversion: 1.15
+    exposure_penalty: 0.30
+    exposure_free_fraction: 0.20
+    drawdown_penalty: 0.50
+    per_trade_penalty: 0.002
+    inaction_reward: -0.01
+    inaction_reward_holding: 0.0
+    bankruptcy_penalty: -5.0
+
+  sleep:
+    start_hour: 23.0
+    duration_hours: 8.0
+    jitter_hours: 0.0
+    skip_probability: 0.0
+
+
+agents:
+
+  # ---------------------------------------------------------------------
+  # STAN -- the balanced everyman. The control group.
+  # Everything at the default. He exists so the other three have something
+  # to be measured against; if Stan and Cartman perform identically then
+  # Cartman's greed is not doing anything and the config is wrong.
+  # ---------------------------------------------------------------------
+  stan:
+    display_name: Stan
+    blurb: The balanced everyman. Moderate everything, no market bias.
+    sleep:
+      start_hour: 23.0        # conventional hours, a normal 8-hour block
+      duration_hours: 8.0
+      jitter_hours: 0.5
+
+  # ---------------------------------------------------------------------
+  # KYLE -- cautious, analytical, rule-following.
+  # Low exploration (exploits what he already trusts), small bets, and the
+  # heaviest exposure and drawdown penalties of the four, which pushes him
+  # toward steady small wins. act_threshold above zero means he needs a
+  # genuine edge before acting rather than merely a non-negative one.
+  # ---------------------------------------------------------------------
+  kyle:
+    display_name: Kyle
+    blurb: Cautious and analytical. Small, well-sized bets on patterns he trusts.
+    policy:
+      epsilon: 0.05           # rarely explores
+      optimism: 0.05          # starts sceptical
+      act_threshold: 0.05     # demands a real edge, not just any edge
+      learning_rate: 0.008    # updates his views slowly
+    memory:
+      ewma_alpha: 0.10        # long memory; recent results do not sway him
+    sizing:
+      min_fraction: 0.01
+      max_fraction: 0.04
+    trading:
+      max_open_positions: 12
+      min_hold_seconds: 21600   # holds longest of the four; not a churner
+      exit_margin: 0.25         # needs strong evidence before abandoning a view
+    reward:
+      exposure_penalty: 0.60  # heaviest -- punished hardest for oversizing
+      drawdown_penalty: 1.00  # and for digging holes
+      loss_aversion: 1.35
+    sleep:
+      start_hour: 22.5        # the most disciplined schedule of the four
+      duration_hours: 8.0
+      jitter_hours: 0.1       # same window every day, rarely varies
+
+  # ---------------------------------------------------------------------
+  # CARTMAN -- greedy, overconfident, swings big.
+  # High optimism and a negative act_threshold mean he will take bets the
+  # others pass on. High ewma_alpha is his "over-repeats whatever recently
+  # worked" trait (PRD 4) -- one number, not a special case. The light
+  # exposure penalty is what lets his big swings survive the reward function
+  # long enough to either pay off or ruin him.
+  # ---------------------------------------------------------------------
+  cartman:
+    display_name: Cartman
+    blurb: Greedy and overconfident. Big swings, long shots, chases hot streaks.
+    policy:
+      epsilon: 0.20
+      optimism: 0.40          # convinced he is right until proven otherwise
+      act_threshold: -0.05    # will take marginal bets the others skip
+      learning_rate: 0.015
+    memory:
+      ewma_alpha: 0.50        # what worked last week dominates
+    sizing:
+      min_fraction: 0.08
+      max_fraction: 0.30      # bets big
+    trading:
+      max_open_positions: 30
+      min_hold_seconds: 7200    # rides his positions, convinced they will come in
+      exit_margin: 0.20
+    reward:
+      exposure_penalty: 0.10  # lightest -- barely punished for oversizing
+      drawdown_penalty: 0.25
+      loss_aversion: 1.05     # shrugs off losses
+    sleep:
+      start_hour: 3.0         # lazy, late riser
+      duration_hours: 11.0    # sleeps the longest
+      jitter_hours: 1.5
+
+  # ---------------------------------------------------------------------
+  # KENNY -- chaotic, unpredictable, high-variance.
+  # Very high epsilon means he is mostly exploring: he ends up in markets
+  # nobody else touches, which is exactly the point. Erratic sizing (a wide
+  # min/max band), the most open positions, and the shortest sleep -- with a
+  # real chance of skipping it entirely. Highest awake time of the four.
+  # ---------------------------------------------------------------------
+  kenny:
+    display_name: Kenny
+    blurb: Chaotic and unpredictable. Constantly tries new markets, in and out fast.
+    policy:
+      epsilon: 0.55           # explores more than half the time
+      optimism: 0.20
+      act_threshold: -0.10    # almost always finds something worth doing
+      learning_rate: 0.02     # swings his views around quickly
+    memory:
+      ewma_alpha: 0.60
+    sizing:
+      min_fraction: 0.01
+      max_fraction: 0.25      # wildly inconsistent bet sizes
+    trading:
+      decision_interval_seconds: 30    # acts twice as often as the others
+      candidates_per_decision: 60
+      max_open_positions: 40
+      exit_check_interval_seconds: 120  # shortest hold times; churns positions
+      min_hold_seconds: 600             # in and out fast (PRD 4)
+      exit_margin: 0.05                 # bails at the first sign of trouble
+    reward:
+      exposure_penalty: 0.20
+      drawdown_penalty: 0.30
+      per_trade_penalty: 0.001   # feels the cost of churning least
+    sleep:
+      start_hour: 4.0
+      duration_hours: 5.0     # shortest of the four
+      jitter_hours: 3.0       # irregular windows
+      skip_probability: 0.25  # sometimes skips sleep entirely to keep trading

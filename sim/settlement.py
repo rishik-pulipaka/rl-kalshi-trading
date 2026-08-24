@@ -139,6 +139,23 @@ def refund_position(portfolio, position, day):
     return 0
 
 
+def classify(outcome, pnl):
+    """Reduce an outcome label to what memory records: win, loss, or void.
+
+    A voluntary exit is a win or a loss depending on whether it made money.
+    Recording it as its own third thing was a real bug: exits counted as neither
+    win nor loss, so a memory row could sit at 46 encounters with a win rate of
+    None -- which then made the belief invisible to the policy, because
+    `summarize_memory` skips beliefs with no win rate. An agent that mostly
+    exits positions would learn nothing at all.
+    """
+    if outcome == "void":
+        return "void"
+    if outcome == "exit":
+        return "win" if pnl > 0 else "loss"
+    return outcome
+
+
 def outcome_for_memory(position, outcome):
     """Compact summary of how a position turned out, for the memory bank.
 
@@ -147,6 +164,7 @@ def outcome_for_memory(position, outcome):
     where an agent needs to be able to tell them apart.
     """
     pnl = position.realized_pnl or 0
+    outcome = classify(outcome, pnl)
     return {
         "ticker": position.ticker,
         "series": position.series,

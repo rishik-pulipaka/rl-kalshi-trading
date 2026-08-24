@@ -67,10 +67,12 @@ class Position:
                  "entry_gross", "entry_fee", "opened_at", "opened_day",
                  "basket_id", "status", "exit_price", "exit_proceeds",
                  "exit_fee", "closed_at", "closed_day", "realized_pnl",
-                 "entry_features", "category", "series", "close_ts", "result")
+                 "entry_features", "category", "series", "close_ts", "result",
+                 "stake_fraction")
 
     def __init__(self, agent, ticker, side, fill, day, features=None,
-                 basket_id=None, category=None, series=None, close_ts=None):
+                 basket_id=None, category=None, series=None, close_ts=None,
+                 stake_fraction=0.0):
         self.id = _new_id("p")
         self.agent = agent
         self.ticker = ticker
@@ -85,6 +87,11 @@ class Position:
         self.category = category
         self.series = series
         self.close_ts = close_ts
+        # How much of the bankroll this bet represented at the moment it was
+        # made. Recorded at entry because it cannot be reconstructed later --
+        # the bankroll has moved on -- and the risk-shaped learning target
+        # needs it. See `agent/reward.trade_target`.
+        self.stake_fraction = stake_fraction
 
         self.status = OPEN
         self.exit_price = None
@@ -162,6 +169,7 @@ class Position:
             "opened_day": self.opened_day, "basket_id": self.basket_id,
             "category": self.category, "series": self.series,
             "close_ts": self.close_ts, "status": self.status,
+            "stake_fraction": self.stake_fraction,
             "exit_price": self.exit_price, "exit_proceeds": self.exit_proceeds,
             "exit_fee": self.exit_fee, "closed_at": self.closed_at,
             "closed_day": self.closed_day, "realized_pnl": self.realized_pnl,
@@ -238,9 +246,12 @@ class Portfolio:
                 f"{self.agent} needs {money.fmt(fill.cost)} but holds "
                 f"{money.fmt(self.bankroll)}")
 
+        # Computed BEFORE the deduction: the fraction of what the agent had.
+        capital = max(self.bankroll, 1)
         position = Position(self.agent, ticker, side, fill, day,
                             features=features, basket_id=basket_id,
-                            category=category, series=series, close_ts=close_ts)
+                            category=category, series=series, close_ts=close_ts,
+                            stake_fraction=fill.cost / capital)
         self.bankroll -= fill.cost
         self.total_fees += fill.fee
         self.positions[position.id] = position
