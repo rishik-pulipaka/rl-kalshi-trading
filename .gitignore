@@ -1,0 +1,30 @@
+# --- Secrets / credentials (NEVER commit) ---
+# The Kalshi private key is deliberately NOT stored in this project at all.
+# .env points at its existing location outside this repo.
+.env
+.env.local
+*.pem
+*.key
+*.p8
+
+# --- Agent state, memory, model weights, event logs ---
+# All runtime state lives under data/ and is machine-local by design (PRD 15).
+data/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# --- Claude Code local settings (machine-specific) ---
+.claude/settings.local.json
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,23 @@
+# Python 3.12. All free/open-source (PRD 12: this project costs $0).
+# Deliberately no PyTorch — the RL here is linear function approximation on
+# NumPy, which is both easier to explain and ~2-3 GB lighter on disk.
+
+# Kalshi data layer
+requests>=2.32
+websockets>=17.0
+cryptography>=50.0
+python-dotenv>=1.2
+
+# Learning + analysis
+numpy>=1.26
+pandas>=2.2
+
+# Dashboard
+Flask>=3.1
+Flask-Cors>=5.0
+
+# Config
+PyYAML>=6.0
+
+# Tests
+pytest>=9.0
