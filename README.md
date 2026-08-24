@@ -79,9 +79,27 @@ handoff to **live learning**, where one real trading day is one episode.
 
 ## Status
 
-🚧 **In development.** Building in gated stages: Stan end-to-end first, then
-comprehensive logging, then the live dashboard, then the other three agents,
-then head-to-head comparison.
+**Running.** All four agents trade simulated money against the live Kalshi
+firehose, with the dashboard alongside them.
+
+Four minutes into one run, the personalities had already separated on their own:
+
+```
+Stan $95.08    Kyle $100.00    Cartman $87.09    Kenny $89.44
+```
+
+Kyle had not placed a single trade -- nothing cleared his `act_threshold`.
+Cartman was bleeding fastest (big bets), Kenny second (churn), Stan in between.
+Nobody was making money, which is what §13 predicts and what an honest day one
+looks like.
+
+What exists: the read-only data layer, a two-tier firehose over ~100k markets,
+the trading simulation, the memory bank, the learning loop, comprehensive
+logging from day one, and all five dashboard views. 251 tests.
+
+Still open: historical pretraining (Phase A) is scaffolded but not wired in, and
+bankruptcy currently costs an agent little because the terminal penalty lives in
+the daily reward, which does not train the model.
 
 ## Safety
 
@@ -113,7 +131,8 @@ cp .env.example .env    # then fill in your Kalshi key id and .pem path
 ## Running
 
 ```bash
-python run.py
+python run.py                 # Stan only
+python run.py --agents all    # all four
 ```
 
 Starts the agent simulation **and** the dashboard together from one terminal.
@@ -124,6 +143,28 @@ open — not a VS Code integrated terminal. The agents keep learning whether or 
 the browser tab is open; the dashboard is just a view onto data they're
 continuously writing. All state persists to `data/`, so a crash or reboot resumes
 rather than restarting from zero.
+
+## A note on what the code knows that the docs do not
+
+Several things about Kalshi's API are not documented anywhere and cost real
+debugging time. They are written into the modules that depend on them, with the
+measurements that established them:
+
+- `orderbook_delta` **rejects an unfiltered subscribe** while `ticker`, `trade`,
+  and `market_lifecycle_v2` accept one. The two-tier stream design is forced by
+  this, not chosen. (`kalshi/stream.py`)
+- `seq` is a **connection-wide counter over every sequenced frame** — not per
+  market, not per subscription, and `subscribed` acknowledgements consume one.
+  Getting this wrong leaves every order book silently stale.
+  (`kalshi/books.py`, reproducible via `tools/probe_sequence.py`)
+- `/events?with_nested_markets=true` returns the real universe in 59 pages and
+  ~20s; `/markets?status=open` needs 1,287 pages for the same thing plus 1.19M
+  auto-generated parlays. (`kalshi/universe.py`)
+- An open market's status is `"active"`, not `"open"` — `"open"` is the
+  *event's* status. A `yes_bid` of `"0.0000"` is the absence of a bid, not a bid
+  at zero.
+- A settled market's `last_price` is the post-settlement print (0.9990 / 0.0010).
+  Training on it is label leakage. (`kalshi/rest.py`)
 
 ## Design docs
 
