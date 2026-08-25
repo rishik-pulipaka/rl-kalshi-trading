@@ -109,10 +109,12 @@ class KillSwitch:
 class System:
     """Everything wired together."""
 
-    def __init__(self, agent_names, data_dir=DATA_DIR, dashboard_port=8000):
+    def __init__(self, agent_names, data_dir=DATA_DIR, dashboard_port=8000,
+                 pretrain_series=None):
         load_dotenv()
         self.data_dir = data_dir
         self.dashboard_port = dashboard_port
+        self.pretrain_series = pretrain_series or []
         os.makedirs(data_dir, exist_ok=True)
 
         key_id = os.getenv("KALSHI_KEY_ID")
@@ -198,6 +200,11 @@ class System:
 
         for agent in self.agents:
             resumed = agent.load()
+            # PRD 3.1: Phase A runs once, for an agent that has never learned
+            # anything. The handoff is clean -- no historical training happens
+            # again once an agent has live experience.
+            if not resumed and self.pretrain_series:
+                self._pretrain(agent)
             state = "resumed" if resumed else "fresh"
             print(f"\n  {agent.p.display_name:8s} {state:8s} "
                   f"{money.fmt(agent.portfolio.bankroll):>10}  "
@@ -219,6 +226,23 @@ class System:
 
         self._start_dashboard()
         print(f"\nrunning. Ctrl-C to stop.\n")
+
+    def _pretrain(self, agent):
+        """Phase A for one fresh agent (PRD 3.1)."""
+        from agent import pretrain as pretrain_module
+        print(f"  pretraining {agent.p.display_name} on "
+              f"{', '.join(self.pretrain_series)} ...", flush=True)
+        try:
+            summary = pretrain_module.pretrain(
+                agent, self.pretrain_series, markets_per_series=200,
+                data_dir=self.data_dir, rng=agent.rng)
+            print(f"    {summary['observations']} observations, "
+                  f"{summary['patterns']} memory patterns, "
+                  f"{summary['seconds']}s")
+            self.store.log_event("pretrained", agent.name, summary)
+        except Exception:
+            log.exception("pretraining %s failed; going live untrained",
+                          agent.name)
 
     def _start_dashboard(self):
         try:
@@ -444,6 +468,10 @@ def main():
                     default=int(os.getenv("DASHBOARD_PORT", "8000")))
     ap.add_argument("--data-dir", default=DATA_DIR)
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--pretrain", default="",
+                    help="comma-separated series for Phase A historical "
+                         "pretraining, run once per fresh agent "
+                         "(e.g. KXBTC15M,KXHIGHNY)")
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -455,7 +483,9 @@ def main():
     names = (list(load_all()) if args.agents == "all"
              else [n.strip() for n in args.agents.split(",") if n.strip()])
 
-    system = System(names, data_dir=args.data_dir, dashboard_port=args.port)
+    system = System(names, data_dir=args.data_dir, dashboard_port=args.port,
+                    pretrain_series=[s.strip() for s in args.pretrain.split(",")
+                                     if s.strip()])
 
     def handle_signal(signum, frame):
         system.stop()
