@@ -168,4 +168,8 @@ measurements that established them:
 
 ## Design docs
 
-[`agents-prd.md`](agents-prd.md) — the full product requirements this is built against.
+- [`docs/DASHBOARD.md`](docs/DASHBOARD.md) — how to read the dashboard: what
+  every number means, which ones matter, and how to tell a bug from an agent
+  that is simply bad at trading yet.
+- [`agents-prd.md`](agents-prd.md) — the full product requirements this is
+  built against.
