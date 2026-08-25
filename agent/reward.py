@@ -82,7 +82,12 @@ class RewardWeights:
     inaction_reward_holding: float = 0.0
 
     # --- terminal ---------------------------------------------------------
+    # Scoreboard-side: one big negative on the day an agent is ruined.
     bankruptcy_penalty: float = -5.0
+    # Learner-side: added on top of the total loss already carried by every
+    # position that was open at the moment of ruin. Without this the terminal
+    # event is invisible to the model -- see `trade_target`.
+    ruin_penalty: float = 1.0
 
     @classmethod
     def from_dict(cls, data):
@@ -158,7 +163,7 @@ def trade_target(position, weights=None):
     agents to actually learn has to be expressed here -- not only in the daily
     reward, which is a scoreboard.
 
-    Two shaping terms are folded in, both from PRD 5:
+    Three shaping terms are folded in, all from PRD 5:
 
       **Loss aversion.** A losing trade is weighted slightly more heavily than
       an equivalent win, so capital preservation carries real weight. Mild on
@@ -171,6 +176,22 @@ def trade_target(position, weights=None):
       well-sized win"), and without it the shaping has no path to the learner:
       return on risk is scale-free, so a reckless win and a careful one with the
       same ratio are otherwise literally the same training example.
+
+      **Ruin.** A position still open when the agent is wiped out is abandoned
+      as a total loss, and it carries an extra penalty on top. Two reasons.
+      First, the daily `bankruptcy_penalty` is a scoreboard entry -- it never
+      touches a weight -- so without this the single worst thing that can happen
+      to an agent is the one thing it cannot learn from. Second, and worse:
+      those positions used to train the model *zero* times, because nothing
+      called back into the learner when the portfolio was reset. Every ordinary
+      loss taught something and only the catastrophic ones were silently
+      dropped, which biased the model optimistic about exactly the bets that
+      ruin an agent. Measured on a forced bankruptcy: ten total-loss positions,
+      zero weight updates, weights bit-identical afterwards.
+
+      The penalty is flat per position rather than scaled by size, because size
+      is already accounted for by the exposure term above and counting it twice
+      would just be a heavier exposure penalty wearing a different name.
 
     Note what this does to the meaning of Q. It is no longer a pure prediction
     of expected return -- it is a prediction of *this agent's utility* for the
@@ -194,7 +215,15 @@ def trade_target(position, weights=None):
     # Penalise the slice of the bankroll that went beyond the "free" allowance.
     fraction = getattr(position, "stake_fraction", 0.0) or 0.0
     excess = max(0.0, fraction - weights.exposure_free_fraction)
-    return roi - weights.exposure_penalty * excess
+    target = roi - weights.exposure_penalty * excess
+
+    # Read off the position rather than taken as an argument on purpose: the
+    # failure mode being fixed here is a call site that forgets, and there is
+    # exactly one way a position comes to be marked "bankrupt".
+    if getattr(position, "result", None) == "bankrupt":
+        target -= weights.ruin_penalty
+
+    return target
 
 
 def summarize_day(agent, day, reward, parts, portfolio_stats):

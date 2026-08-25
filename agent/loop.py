@@ -489,8 +489,13 @@ class Agent:
 
     # ---------- the daily episode ----------
 
-    def close_day(self, day=None, price_of=None):
-        """Score the episode, log it, and persist state (PRD 3.2, 5)."""
+    def close_day(self, day=None, price_of=None, universe=None):
+        """Score the episode, log it, and persist state (PRD 3.2, 5).
+
+        `universe` is optional and used only to look up the markets behind any
+        positions abandoned to a bankruptcy, so their lesson reaches the memory
+        bank as well as the weights. Without it the weights still learn.
+        """
         day = day or self.day
         stats = self.portfolio.stats(price_of)
         equity = stats["equity"]
@@ -509,12 +514,23 @@ class Agent:
             starting_bankroll=self.p.starting_bankroll)
 
         if went_bankrupt:
-            count = self.portfolio.reset_after_bankruptcy(self.p.starting_bankroll)
-            log.warning("%s went bankrupt (#%d); reset to %s", self.name, count,
-                        money.fmt(self.p.starting_bankroll))
+            count, abandoned = self.portfolio.reset_after_bankruptcy(
+                self.p.starting_bankroll)
+            # Learn from the wreckage. These are total losses carrying an extra
+            # ruin penalty (see reward.trade_target); skipping them meant the
+            # worst outcome in the system was the only one that taught nothing.
+            for position in abandoned:
+                market = universe.get(position.ticker) if universe else None
+                self._learn_from(position, market, "bankrupt")
+                if self.store:
+                    self.store.upsert_position(position)
+            log.warning("%s went bankrupt (#%d); reset to %s (%d positions "
+                        "abandoned and learned from)", self.name, count,
+                        money.fmt(self.p.starting_bankroll), len(abandoned))
             if self.store:
                 self.store.log_event("bankruptcy", self.name,
-                                     {"count": count, "day": day}, day)
+                                     {"count": count, "day": day,
+                                      "abandoned": len(abandoned)}, day)
 
         if self.store:
             self.store.log_daily(
@@ -533,13 +549,13 @@ class Agent:
         self.save()
         return reward, parts
 
-    def roll_day_if_needed(self, price_of=None):
+    def roll_day_if_needed(self, price_of=None, universe=None):
         """Close the episode and start a new one when the date changes."""
         today = dt.date.today().isoformat()
         if today == self.day:
             return None
         finished = self.day
-        result = self.close_day(finished, price_of)
+        result = self.close_day(finished, price_of, universe)
         self.day = today
         self.trades_today = 0
         log.info("%s rolled over %s -> %s", self.name, finished, today)

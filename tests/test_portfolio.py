@@ -265,11 +265,22 @@ def test_reset_restores_the_stake_and_counts_the_event():
     p = _portfolio(bankroll=money.dollars(10))
     pos = p.open_position("M", YES, _buy(price=5000, contracts=19), day="d1")
 
-    assert p.reset_after_bankruptcy() == 1
+    count, abandoned = p.reset_after_bankruptcy()
+    assert count == 1
     assert p.bankroll == money.STARTING_BANKROLL
     assert p.peak_equity == money.STARTING_BANKROLL
     assert pos.status == SETTLED and pos.result == "bankrupt"
     assert p.open_positions() == []
+    # Handed back, not dropped: the caller has to train on these.
+    assert abandoned == [pos]
+
+
+def test_the_abandoned_positions_are_returned_as_total_losses():
+    """They are training examples, and they must look like what they were."""
+    p = _portfolio(bankroll=money.dollars(10))
+    pos = p.open_position("M", YES, _buy(price=5000, contracts=19), day="d1")
+    _, abandoned = p.reset_after_bankruptcy()
+    assert [a.realized_pnl for a in abandoned] == [-pos.cost]
 
 
 def test_reset_abandons_open_positions_rather_than_settling_them_later():

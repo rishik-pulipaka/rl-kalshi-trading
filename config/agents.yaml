@@ -54,7 +54,8 @@ defaults:
     per_trade_penalty: 0.002
     inaction_reward: -0.01
     inaction_reward_holding: 0.0
-    bankruptcy_penalty: -5.0
+    bankruptcy_penalty: -5.0   # scoreboard only -- never touches a weight
+    ruin_penalty: 1.0          # what the LEARNER pays per position held at ruin
 
   sleep:
     start_hour: 23.0
@@ -109,6 +110,7 @@ agents:
       exposure_penalty: 0.60  # heaviest -- punished hardest for oversizing
       drawdown_penalty: 1.00  # and for digging holes
       loss_aversion: 1.35
+      ruin_penalty: 2.00      # a blow-up marks him for a long time
     sleep:
       start_hour: 22.5        # the most disciplined schedule of the four
       duration_hours: 8.0
@@ -145,6 +147,7 @@ agents:
       exposure_penalty: 0.10  # lightest -- barely punished for oversizing
       drawdown_penalty: 0.25
       loss_aversion: 1.05     # shrugs off losses
+      ruin_penalty: 0.40      # and shrugs off going broke, which is the point
     sleep:
       start_hour: 3.0         # lazy, late riser
       duration_hours: 11.0    # sleeps the longest

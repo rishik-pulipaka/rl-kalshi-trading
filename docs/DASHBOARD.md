@@ -70,6 +70,12 @@ learning looks like.
 **Bankruptcies** — how many times it hit the $1.00 floor and was reset to $100.
 Cartman will get here first.
 
+> Going broke is a lesson, not just a counter. Every position still open at the
+> moment of ruin is written off as a total loss **and trained on**, carrying an
+> extra `ruin_penalty` on top. How heavily an agent is marked by a blow-up is
+> part of its personality: Kyle 2.00, Stan 1.00, Cartman 0.40 — shrugging it off
+> is the point of Cartman.
+
 Below the cards: **open positions**, marked to market, with unrealized P&L
 clearly separated from realized (§7). `Size` is the fraction of bankroll that
 position represented when opened — this is what the risk penalty reads.
@@ -86,6 +92,13 @@ pick) or `explore` (deliberately random).
 
 Comparing `Q` against actual P&L over many rows tells you whether the model's
 predictions mean anything yet. Early on they will not.
+
+> **Every `Q` reading exactly the same number early on is correct.** A brand-new
+> agent has all-zero weights, so every market scores exactly its `optimism`
+> setting — 0.150 for Stan, 0.200 for Kenny. A column of identical values is
+> what "has learned nothing yet" looks like, not a stuck calculation. Watch for
+> the day they start to differ from each other; that is the model beginning to
+> distinguish between markets.
 
 **Every decision** — including the ones where the agent did nothing. §9 requires
 this and it is genuinely informative:
@@ -190,6 +203,19 @@ weight × feature value, nothing hidden. `mem_series_roi = +1.03` means
 "remembered ROI on this market type strongly raises my estimate". This table is
 the whole reason for choosing a linear model over a neural net.
 
+> **Every `mem_*` weight sitting at exactly `0.0000` in the first days is
+> normal, and is the single most alarming-looking thing on the dashboard.**
+> A weight can only move if its feature was non-zero in some training example.
+> The memory bank is written *when a position resolves*, so the trades that have
+> trained the model so far were opened back when memory was still empty — every
+> one of them carried `mem_* = 0`. As positions opened *after* memory existed
+> start resolving, these come alive on their own. Nothing is unwired.
+>
+> Two ways to confirm rather than take this on faith: the **Memory bank** tab
+> should be filling up (if it is empty too, nothing has resolved yet, which
+> explains both), and running with `--pretrain` seeds memory from history before
+> the first live trade, which makes these weights non-zero almost immediately.
+
 ---
 
 ## Head-to-head
@@ -238,6 +264,8 @@ celebrating** — that is what leaked data looks like.
 | Every decision `no_liquidity` | — | Yes. Check `books=N/N` are equal and non-zero |
 | Win rate 0% with trades settled | Possible early with long shots | Check calibration: flat-lined means broken features |
 | Memory patterns stuck at 0 | Only if nothing has settled | Yes if positions have settled |
+| All `mem_*` weights exactly 0.0000 | Yes, for the first days — see Analytics | Yes if the memory bank has rows *and* trades opened since then have resolved |
+| Every `Q` identical | Yes — that is the optimism prior | Yes if it persists after dozens of weight updates |
 | Equity exactly $100.00 after hours | Only Kyle | Any other agent means it never traded |
 | Bankruptcies climbing fast | Cartman, plausibly | All four means sizing is broken |
 | `stream DOWN` persisting | — | Yes. Check the terminal for reconnect backoff |

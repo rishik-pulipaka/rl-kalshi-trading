@@ -427,3 +427,87 @@ def test_the_store_reports_its_own_disk_usage(store):
     stats = store.stats()
     assert stats["bytes_on_disk"] > 0
     assert set(stats) >= {"decisions", "positions", "daily", "events"}
+
+
+# ---------- learning from ruin ----------
+
+def test_positions_held_at_ruin_train_the_model(tmp_path):
+    """The bug: they trained it zero times.
+
+    Every ordinary loss updates the weights on settlement. Positions still open
+    when the bankroll hits the floor are abandoned by the reset -- and nothing
+    used to call back into the learner for them. So the only losing trades the
+    model never saw were the catastrophic ones, which biased it optimistic
+    about exactly the bets that ruin an agent. Measured before the fix: 10
+    total-loss positions, 0 weight updates, weights bit-identical afterwards.
+    """
+    universe = FakeUniverse(n=10)
+    agent = Agent(load_all()["cartman"], str(tmp_path), seed=3)
+    agent.is_asleep = lambda when=None: False
+    for _ in range(6):
+        agent.tick(universe)
+
+    held = len(agent.portfolio.open_positions())
+    assert held, "test needs open positions to abandon"
+
+    agent.portfolio.bankroll = 0          # ruin: equity falls under the floor
+    broke = lambda ticker: 0
+    assert agent.portfolio.is_bankrupt(broke)
+
+    before = agent.policy.updates
+    agent.close_day(price_of=broke, universe=universe)
+
+    assert agent.portfolio.bankruptcies == 1
+    assert agent.policy.updates == before + held
+    agent.close()
+
+
+def test_ruin_also_reaches_the_memory_bank(tmp_path):
+    """A pattern that helped wipe the agent out is worth remembering as one."""
+    universe = FakeUniverse(n=10)
+    agent = Agent(load_all()["cartman"], str(tmp_path), seed=3)
+    agent.is_asleep = lambda when=None: False
+    for _ in range(6):
+        agent.tick(universe)
+
+    agent.portfolio.bankroll = 0
+    agent.close_day(price_of=lambda t: 0, universe=universe)
+
+    assert agent.memory.stats()["patterns"] > 0
+    agent.close()
+
+
+def test_ruin_still_trains_the_weights_without_a_universe(tmp_path):
+    """Memory needs the market object; the weights do not. Losing the lesson
+    entirely because a caller had no universe to hand would be the same class
+    of bug all over again."""
+    universe = FakeUniverse(n=10)
+    agent = Agent(load_all()["cartman"], str(tmp_path), seed=3)
+    agent.is_asleep = lambda when=None: False
+    for _ in range(6):
+        agent.tick(universe)
+
+    held = len(agent.portfolio.open_positions())
+    agent.portfolio.bankroll = 0
+    before = agent.policy.updates
+    agent.close_day(price_of=lambda t: 0)          # no universe
+
+    assert agent.policy.updates == before + held
+    agent.close()
+
+
+def test_the_bankruptcy_event_records_how_much_was_abandoned(store, tmp_path):
+    universe = FakeUniverse(n=10)
+    agent = Agent(load_all()["cartman"], str(tmp_path), store=store, seed=3)
+    agent.is_asleep = lambda when=None: False
+    for _ in range(6):
+        agent.tick(universe)
+    held = len(agent.portfolio.open_positions())
+
+    agent.portfolio.bankroll = 0
+    agent.close_day(price_of=lambda t: 0, universe=universe)
+
+    events = [e for e in store.recent_events() if e["kind"] == "bankruptcy"]
+    assert len(events) == 1
+    assert events[0]["detail"]["abandoned"] == held
+    agent.close()

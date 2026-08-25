@@ -370,8 +370,14 @@ class Portfolio:
         Open positions are abandoned rather than force-closed: they are already
         worthless by definition, and settling them later would credit money to an
         agent that has since been reset.
+
+        Returns `(count, abandoned)`. The abandoned positions are returned rather
+        than quietly dropped because they are training examples -- the caller has
+        to feed them to the learner. Leaving them out was a real bug: they were
+        the only losing trades in the whole system that never trained anything.
         """
-        for position in self.open_positions():
+        abandoned = self.open_positions()
+        for position in abandoned:
             position.status = SETTLED
             position.result = "bankrupt"
             position.realized_pnl = -position.cost
@@ -379,7 +385,7 @@ class Portfolio:
         self.bankruptcies += 1
         self.bankroll = bankroll
         self.peak_equity = bankroll
-        return self.bankruptcies
+        return self.bankruptcies, abandoned
 
     # ---------- reporting ----------
 

@@ -387,6 +387,36 @@ def test_bankruptcy_is_a_strong_terminal_penalty():
     assert parts["bankruptcy"] < -1
 
 
+def test_a_position_held_at_ruin_trains_harder_than_an_ordinary_wipeout():
+    """The daily bankruptcy penalty is a scoreboard entry -- it never reaches a
+    weight. If ruin is to be learnable at all it has to land here."""
+    from sim import fills
+    from sim.portfolio import Portfolio
+
+    def _total_loss(result):
+        portfolio = Portfolio("stan")
+        position = portfolio.open_position(
+            "M", YES, fills.buy([(5000, 1000)], 10, YES), day="d1")
+        position.realized_pnl = -position.cost
+        position.result = result
+        return position
+
+    weights = _weights()
+    ordinary = trade_target(_total_loss("loss"), weights)
+    ruinous = trade_target(_total_loss("bankrupt"), weights)
+
+    assert ruinous < ordinary
+    assert ordinary - ruinous == pytest.approx(weights.ruin_penalty)
+
+
+def test_agents_are_marked_differently_by_being_ruined():
+    """Kyle should carry a blow-up; Cartman shrugging it off is his character."""
+    agents = load_all()
+    penalties = {n: p.reward.ruin_penalty for n, p in agents.items()}
+    assert penalties["kyle"] == max(penalties.values())
+    assert penalties["cartman"] == min(penalties.values())
+
+
 def test_the_breakdown_sums_to_the_reward():
     """A single scalar is useless for diagnosing a reward loophole."""
     reward, parts = daily_reward(_weights(), realized_pnl=money.dollars(-5), trades=7,

@@ -312,7 +312,7 @@ class System:
 
     def _service(self, agent, now):
         """One agent's turn: roll the day, maybe decide, maybe exit."""
-        agent.roll_day_if_needed(price_of=self._price_of)
+        agent.roll_day_if_needed(price_of=self._price_of, universe=self.universe)
 
         if self.kill.paused or agent.is_asleep():
             return

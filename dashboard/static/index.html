@@ -29,8 +29,12 @@ button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
 button:hover{border-color:var(--accent)}
 button.danger{border-color:#4a2224;color:var(--down)}
 button.active{background:var(--accent);color:#0b0f14;border-color:var(--accent)}
+/* Sticky like the header: the memory bank and analytics views run several
+   screens long, and having to scroll back to the top to change agent or tab
+   makes comparing two agents needlessly tedious. */
 nav{display:flex;gap:4px;padding:8px 18px;background:var(--panel);
-  border-bottom:1px solid var(--line);flex-wrap:wrap}
+  border-bottom:1px solid var(--line);flex-wrap:wrap;
+  position:sticky;top:var(--header-h,41px);z-index:19}
 main{padding:18px;max-width:1500px}
 .grid{display:grid;gap:14px}
 .cards{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
@@ -117,10 +121,18 @@ const money = v => v===null||v===undefined ? '—'
 const pct = v => v===null||v===undefined ? '—' : (100*v).toFixed(1)+'%';
 const cents = v => v===null||v===undefined ? '—' : (100*v).toFixed(1)+'¢';
 const sign = v => v===null||v===undefined ? '' : (v>0?'up':(v<0?'down':''));
-const ago = ts => { if(!ts) return '—';
-  const s = Date.now()/1000 - ts;
+/* Format a span of seconds. Takes the magnitude on purpose: `ago` and `until`
+   both call it, and a future timestamp used to fall through every `<` branch
+   and print raw negative seconds ("-69541152s" -> "69541152s" once the caller
+   stripped the sign). Years matter here -- Kalshi lists markets resolving in
+   2028, and "805d" is worse to read than "2.2y". */
+const dur = s => { s = Math.abs(s);
   if(s<60) return Math.round(s)+'s'; if(s<3600) return Math.round(s/60)+'m';
-  if(s<86400) return Math.round(s/3600)+'h'; return Math.round(s/86400)+'d'; };
+  if(s<86400) return Math.round(s/3600)+'h';
+  if(s<86400*365) return Math.round(s/86400)+'d';
+  return (s/(86400*365)).toFixed(1)+'y'; };
+const ago = ts => !ts ? '—' : dur(Date.now()/1000 - ts);
+const until = ts => !ts ? '—' : dur(ts - Date.now()/1000);
 const esc = s => (s??'').toString().replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 
 async function get(u){ const r = await fetch(u); return r.ok ? r.json() : null; }
@@ -186,8 +198,11 @@ function renderOverview(){
     card("Today's P&amp;L", money(today), `${a.trades_today} trades today`, sign(today)),
     card('Win rate', a.win_rate===null?'no data yet':pct(a.win_rate),
          `${a.wins}W / ${a.losses}L · ${a.open_positions} open`),
-    card(a.sleep.asleep?'Asleep':'Awake',
-         a.sleep.asleep?'💤':'●',
+    // Every other card's title is a fixed label and its big line is the value.
+    // This one used to invert that -- title flipping between Awake/Asleep with
+    // a bare "●" as the value, which said nothing the title had not.
+    card('Status',
+         a.sleep.asleep?'Asleep 💤':'Awake',
          `window ${a.sleep.window_start}–${a.sleep.window_end} · ${a.sleep.awake_hours}h awake/day`
          + (a.sleep.skipped_sleep?' · skipped tonight':'')),
     card('Learning', `${a.policy.updates}`,
@@ -212,8 +227,7 @@ function renderOverview(){
         esc(r.ticker), tag(r.side, r.side), r.contracts,
         cents(r.entry_price), cents(r.current_price), money(r.cost),
         [money(r.unrealized_pnl), sign(r.unrealized_pnl)],
-        pct(r.stake_fraction), ago(r.opened_at),
-        r.close_ts? ago(r.close_ts).replace('-','') : '—',
+        pct(r.stake_fraction), ago(r.opened_at), until(r.close_ts),
       ]), [0,0,1,1,1,1,1,1,1,1]));
   });
 }
@@ -475,18 +489,33 @@ function barChart(values){
 }
 
 function calibrationChart(points){
-  const W=460,H=150,P=26;
-  const x = v => P + v*(W-2*P);
-  const y = v => H-P - v*(H-2*P);
+  // Without a scale a dot above the diagonal is just a dot: you cannot tell
+  // "wins 60% when it should win 30%" from "wins 32% when it should win 30%".
+  // Padding is per-side rather than one P, because the axis labels need room
+  // that the plot area does not -- a uniform pad put "100%" on top of the
+  // axis names.
+  const W=460,H=160, PL=44,PR=16,PT=16,PB=34;
+  const x = v => PL + v*(W-PL-PR);
+  const y = v => H-PB - v*(H-PT-PB);
   const dots = points.map(p=>
     `<circle cx="${x(p.implied).toFixed(1)}" cy="${y(p.actual).toFixed(1)}"
       r="${Math.min(3+Math.log1p(p.n),8).toFixed(1)}" fill="#58a6ff" opacity=".8"/>`).join('');
+  const tick = (tx,ty,text,anchor) =>
+    `<text x="${tx}" y="${ty}" fill="#5c6773" font-size="9" text-anchor="${anchor}">${text}</text>`;
   return svgEl(`<svg viewBox="0 0 ${W} ${H}">
     <line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" stroke="#5c6773" stroke-dasharray="3,3"/>
-    <line x1="${P}" y1="${H-P}" x2="${W-P}" y2="${H-P}" stroke="#2b3441"/>
-    <line x1="${P}" y1="${P}" x2="${P}" y2="${H-P}" stroke="#2b3441"/>
+    <line x1="${PL}" y1="${H-PB}" x2="${W-PR}" y2="${H-PB}" stroke="#2b3441"/>
+    <line x1="${PL}" y1="${PT}" x2="${PL}" y2="${H-PB}" stroke="#2b3441"/>
+    ${tick(PL-6, y(1)+3, '100%', 'end')}
+    ${tick(PL-6, y(0.5)+3, '50%', 'end')}
+    ${tick(PL-6, y(0)+3, '0%', 'end')}
+    ${tick(x(0), H-PB+12, '0%', 'middle')}
+    ${tick(x(0.5), H-PB+12, '50%', 'middle')}
+    ${tick(x(1), H-PB+12, '100%', 'middle')}
     ${dots}
-    <text x="${W-P-40}" y="${H-8}" fill="#5c6773" font-size="9">implied →</text>
+    ${tick((PL+W-PR)/2, H-4, 'implied probability →', 'middle')}
+    <text x="11" y="${(PT+H-PB)/2}" fill="#5c6773" font-size="9" text-anchor="middle"
+      transform="rotate(-90 11 ${(PT+H-PB)/2})">actual win rate →</text>
   </svg>`);
 }
 
@@ -559,6 +588,15 @@ $('#killbtn').onclick = async ()=>{
     body: JSON.stringify({action:'toggle'})});
   poll();
 };
+
+/* The header wraps on a narrow window, so its height is not a constant. Measure
+   it and let the sticky nav sit exactly underneath. */
+function measureHeader(){
+  const h = document.querySelector('header').offsetHeight;
+  document.documentElement.style.setProperty('--header-h', h+'px');
+}
+measureHeader();
+addEventListener('resize', measureHeader);
 
 poll();
 setInterval(poll, 4000);
