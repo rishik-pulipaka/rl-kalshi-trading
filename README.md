@@ -94,12 +94,30 @@ Nobody was making money, which is what §13 predicts and what an honest day one
 looks like.
 
 What exists: the read-only data layer, a two-tier firehose over ~100k markets,
-the trading simulation, the memory bank, the learning loop, comprehensive
-logging from day one, and all five dashboard views. 251 tests.
+the trading simulation, the memory bank, the learning loop, historical
+pretraining, comprehensive logging from day one, and all five dashboard views
+with every analytic the PRD asks for. **306 tests.**
 
-Still open: historical pretraining (Phase A) is scaffolded but not wired in, and
-bankruptcy currently costs an agent little because the terminal penalty lives in
-the daily reward, which does not train the model.
+Every part of the PRD is built. What is left is calendar time, and the reason is
+worth stating plainly: **the tradeable universe has a median time-to-close of 75
+days.** Only 5.3% of it resolves within a day. Sampled uniformly, the agents
+parked most of their bankroll in markets that could not teach them anything for
+a quarter -- in the first 18 hours live, all four together saw six real
+settlements, and two thirds of the "resolutions" they did get were their own
+exits rather than market outcomes.
+
+Discovery sampling now leans toward markets that resolve sooner, which drops the
+median of what gets drawn from 81 days to about 4. It is a weight and not a
+filter: year-out markets still appear, nothing in it looks at category, and
+`resolution_half_life_days: 0` restores uniform sampling. §13 is still right that
+"up and running" and "visibly competent" are far apart -- this only decides
+whether that gap is measured in weeks or in quarters.
+
+Known limitation: agents cannot learn to bet *smaller*. Bet size is drawn from a
+fixed per-personality distribution and stake size is not a feature, so the
+exposure and ruin penalties can only teach "avoid these patterns", never "risk
+less here". That matches how PRD 4 defines sizing, but it is worth knowing before
+reading much into those two weights.
 
 ## Safety
 
