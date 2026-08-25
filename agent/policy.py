@@ -80,6 +80,12 @@ DEFAULT_OPTIMISM = 0.15
 # agent has ever made.
 TARGET_CLIP = 20.0
 
+# Scores within this of the best count as tied, and one of them is chosen at
+# random. Two candidates whose predicted return differs by less than 1e-9 are
+# the same bet as far as the model is concerned, and picking the earlier one
+# would be a preference for list order rather than for the market.
+TIE_TOLERANCE = 1e-9
+
 
 class Decision:
     """What the agent chose, and enough context to explain it later."""
@@ -146,8 +152,22 @@ class LinearQ:
             return Decision(considered=0, skipped_reason="no_candidates")
 
         scores = [self.q(c.features) for c in candidates]
-        best_index = int(np.argmax(scores))
-        best_q = scores[best_index]
+        best_q = max(scores)
+        # Break ties at random rather than taking the first maximum.
+        #
+        # This matters far more than it looks. A fresh agent has all-zero
+        # weights, so EVERY candidate scores exactly the optimism prior and the
+        # whole list is one big tie. `np.argmax` returns the first index, so the
+        # agent deterministically bought whatever the sampler happened to list
+        # first -- which is always the same half of `_sample_candidates`. Its
+        # opening choices were an artifact of list order, not of the model, and
+        # it stayed that way until enough weight updates arrived to break the
+        # ties on their own. Seen live: two agents kept buying long-dated
+        # markets after sampling was changed to favour fast-resolving ones,
+        # because the reweighted half was never reached.
+        tied = [i for i, s in enumerate(scores) if s >= best_q - TIE_TOLERANCE]
+        best_index = (tied[0] if len(tied) == 1
+                      else self.random.choice(tied))
 
         # Explore: take something other than the best. This is how an agent ends
         # up in markets its memory says nothing about.

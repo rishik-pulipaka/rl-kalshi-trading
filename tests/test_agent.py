@@ -596,3 +596,39 @@ def test_every_agent_exposes_a_dashboard_summary():
         assert summary["display_name"]
         assert summary["blurb"]
         assert "sleep" in summary and "reward" in summary
+
+
+# ---------- tied scores must not resolve to list order ----------
+
+def test_tied_candidates_are_not_resolved_by_list_order():
+    """A fresh agent has all-zero weights, so every candidate scores exactly the
+    optimism prior and the whole list is one tie. Taking the first maximum made
+    its choices an artifact of how the sampler ordered the list -- seen live,
+    two agents kept buying long-dated markets after sampling was reweighted
+    toward fast ones, because the reweighted half was never reached."""
+    q = LinearQ(epsilon=0.0, optimism=0.5, seed=1)
+    candidates = [_Candidate(_vector()) for _ in range(40)]
+    picked = {id(q.select(candidates).candidate) for _ in range(200)}
+    assert len(picked) > 1, "always picked the same position in the list"
+
+
+def test_a_genuinely_better_candidate_still_wins():
+    """Tie-breaking must not become coin-flipping between unequal options."""
+    q = LinearQ(epsilon=0.0, optimism=0.0, seed=2)
+    q.weights[FEATURE_INDEX["price"]] = 1.0
+    candidates = [_Candidate(_vector(price=0.1)) for _ in range(20)]
+    best = _Candidate(_vector(price=0.9))
+    candidates.insert(7, best)
+    for _ in range(50):
+        assert q.select(candidates).candidate is best
+
+
+def test_tie_breaking_does_not_count_as_exploration():
+    """Exploration is a deliberate epsilon-greedy departure from the best pick.
+    Choosing among equals is still exploitation and must not inflate the
+    exploration rate PRD 9 plots."""
+    q = LinearQ(epsilon=0.0, optimism=0.5, seed=3)
+    candidates = [_Candidate(_vector()) for _ in range(10)]
+    for _ in range(30):
+        assert q.select(candidates).explored is False
+    assert q.exploration_rate == 0.0

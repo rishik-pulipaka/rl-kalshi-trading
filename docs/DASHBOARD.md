@@ -193,6 +193,44 @@ which makes it the first real sign of competence.
 **Exploration vs exploitation** — fraction of acted-on decisions that were
 random. Should hover near each agent's `epsilon`: Kenny ~0.55, Kyle ~0.05.
 
+**Win rate trend** — win rate over resolved positions, day by day. Read it
+against equity, never alone: an agent buying favourites can walk this line
+upward while steadily losing money.
+
+**Market diversity over time** — the share of each day's positions that went
+into that agent's single favourite category. Rising means it is narrowing
+toward a niche; flat and low means it is staying broad. This is the "does it
+specialize?" question from §9, and it deliberately measures *share* rather than
+a category count — an agent can keep touching six categories while quietly
+putting 90% of its money in one, and only the share shows that.
+
+**Time to resolution of chosen markets** — the median days-to-resolution of the
+markets entered that day, measured **at entry**. This is not the same as *Avg
+hold time* below it: hold time is how long the agent kept a position, this is
+how far out the market itself settles. It is worth watching closely, because it
+governs how fast the agent learns anything at all.
+
+> **Why this metric exists.** The tradeable universe has a **median
+> time-to-close of 75 days** — only 5.3% of it resolves within a day. Sampled
+> uniformly, agents parked most of their bankroll in markets that could not
+> teach them anything for a quarter: over the first 18 hours live, all four
+> agents together saw **six real settlements**, and two thirds of the
+> "resolutions" they did get were their own exits rather than market outcomes.
+>
+> Discovery sampling is now weighted toward markets resolving sooner
+> (`resolution_half_life_days` in `config/agents.yaml`), which drops the median
+> of what gets drawn from 81 days to about 4. It is a **weight, not a filter**:
+> markets more than a year out still get drawn ~0.8% of the time rather than
+> never, and nothing in it looks at category, so market freedom is intact. Set
+> it to `0` for uniform sampling. It is identical for all four agents on
+> purpose — it controls how fast feedback arrives, so differing values would
+> make the head-to-head comparison measure the sampler instead of the
+> personalities.
+
+**Awake hours per day** — the historical side of the sleep mechanic (§8), next
+to the current status light on Overview. Normalize performance by this before
+comparing agents: Kenny is awake 19h/day and Cartman 13h.
+
 **Market preference** — which categories it gravitates toward. This is one of
 the project's core research questions, and it is meaningful *because* the
 candidate sampling is unfiltered — no category is favoured by the system, so any
@@ -242,6 +280,10 @@ What to watch for:
 
 ## What "normal" looks like over time
 
+These assume the resolution weighting is on (the default). With uniform
+sampling the whole timeline stretches by roughly an order of magnitude, because
+the median market takes 75 days to tell the agent anything.
+
 | When | Expect |
 |---|---|
 | **Hour 1** | Trades across varied categories. Memory near-empty. Everyone losing a little. |
@@ -266,6 +308,8 @@ celebrating** — that is what leaked data looks like.
 | Memory patterns stuck at 0 | Only if nothing has settled | Yes if positions have settled |
 | All `mem_*` weights exactly 0.0000 | Yes, for the first days — see Analytics | Yes if the memory bank has rows *and* trades opened since then have resolved |
 | Every `Q` identical | Yes — that is the optimism prior | Yes if it persists after dozens of weight updates |
+| An agent stops trading entirely | Kyle, or an agent inside its sleep window | Check open positions against its cap — a full cap plus long-dated holdings is a deadlock it cannot exit its way out of |
+| `Time to resolution` climbing past a few weeks | Briefly, after an unlucky draw | Sustained means the weighting is off or set to 0 — learning will crawl |
 | Equity exactly $100.00 after hours | Only Kyle | Any other agent means it never traded |
 | Bankruptcies climbing fast | Cartman, plausibly | All four means sizing is broken |
 | `stream DOWN` persisting | — | Yes. Check the terminal for reconnect backoff |

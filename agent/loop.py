@@ -197,12 +197,15 @@ class Agent:
         budget = self.p.trading.candidates_per_decision
         sampled = []
 
-        # Half the budget on markets we can trade right now.
+        # Half the budget on markets we can trade right now. Weighted the same
+        # way as discovery below -- the working set is built up from whatever
+        # the agent asked depth for in the past, so left unweighted it keeps
+        # feeding back the long-dated markets it used to favour.
         if books is not None:
             ready = [m for m in pool if books.has_depth(m.ticker)]
             if ready:
                 take = min(budget // 2, len(ready))
-                sampled.extend(self.rng.sample(ready, take))
+                sampled.extend(self._discover(ready, take, now))
 
         # The rest on discovery, drawn from the whole universe. This is what
         # keeps market freedom real and what grows the working set over time.
