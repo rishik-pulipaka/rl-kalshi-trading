@@ -105,6 +105,15 @@ class Trading:
     combo_appetite: float = 0.10
     # Legs in a constructed basket.
     combo_legs: int = 3
+    # How strongly discovery sampling leans toward markets that resolve sooner.
+    # A market this many days out is drawn half as often as one resolving now;
+    # 0 turns the weighting off and restores uniform sampling.
+    #
+    # KEEP THIS IDENTICAL FOR ALL FOUR AGENTS. It is the one trading parameter
+    # that must not become a personality trait: it changes how fast an agent
+    # receives feedback, so differing values would make the head-to-head
+    # comparison measure the sampler instead of the personalities.
+    resolution_half_life_days: float = 7.0
 
     @classmethod
     def from_dict(cls, data):

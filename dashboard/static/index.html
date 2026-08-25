@@ -392,6 +392,36 @@ async function renderAnalytics(){
     ? lineChart(d.exploration.map(r=>r.total? r.explored/r.total : 0), '#d29922', 0, 1)
     : null, 'Fraction of acted-on decisions that were exploratory.'));
 
+  // Win rate over resolved positions, day by day. Read it against equity, never
+  // alone -- an agent buying favourites can climb this line while losing money.
+  const wr = d.daily.filter(r=>r.win_rate!==null && r.win_rate!==undefined);
+  g.append(chartCard('Win rate trend', wr.length<2
+    ? null : lineChart(wr.map(r=>r.win_rate), '#3fb950', 0, 1),
+    'Win rate over resolved positions. Read it next to P&L — the two can move apart.'));
+
+  // PRD 9: does it narrow toward a niche or stay broad? Two lines, because an
+  // agent can keep touching six categories while putting 90% into one of them.
+  g.append(chartCard('Market diversity over time', d.diversity.length<2
+    ? null : lineChart(d.diversity.map(r=>r.top_share||0), '#a371f7', 0, 1),
+    'Share of the day’s positions in its single favourite category. '
+    + 'Rising means it is narrowing toward a niche.'));
+
+  // PRD 9: fast markets or slow ones? Measured at entry, so this is the
+  // market's own time to resolution -- not how long the agent held it.
+  g.append(chartCard('Time to resolution of chosen markets',
+    d.horizon.series.length<2 ? null
+      : lineChart(d.horizon.series.map(r=>r.median_seconds/86400), '#58a6ff'),
+    'Median days-to-resolution of the markets it entered that day. '
+    + 'Lower means faster feedback, and faster learning.'));
+
+  // PRD 8 asks for historical sleep, not just the current awake/asleep light:
+  // "how much time awake" is a real variable when comparing agents, and it
+  // drifts for Kenny, who sometimes skips a night entirely.
+  const sleep = d.daily.filter(r=>r.awake_hours!==null && r.awake_hours!==undefined);
+  g.append(chartCard('Awake hours per day', sleep.length<2
+    ? null : lineChart(sleep.map(r=>r.awake_hours), '#e3b341', 0, 24),
+    'Hours awake each day. Normalise performance by this before comparing agents.'));
+
   v.append(g);
 
   const cats = el('div','card'); cats.style.marginTop='14px';
@@ -417,6 +447,11 @@ async function renderAnalytics(){
       : humanDur(d.hold_times.mean_seconds), `${d.hold_times.n} closed positions`),
     card('Bet sizes', d.bet_sizes.length? money(median(d.bet_sizes)) : '—',
       `median of ${d.bet_sizes.length} bets`),
+    // Distinct from hold time above: this is how far out the MARKET resolves,
+    // which is what actually governs how fast a learning signal arrives.
+    card('Time to resolution', d.horizon.median_seconds===null?'—'
+      : humanDur(d.horizon.median_seconds),
+      `median of ${d.horizon.n} positions, measured at entry`),
   );
   v.append(extra);
 

@@ -183,6 +183,8 @@ def create_app(system):
             "categories": categories,
             "bet_sizes": [_dollars(v) for v in store.bet_size_distribution(agent)],
             "exploration": store.exploration_over_time(agent),
+            "diversity": store.diversity_over_time(agent),
+            "horizon": store.resolution_horizon(agent),
             "calibration": _calibration(store, agent),
             "streaks": _streaks(store, agent),
             "hold_times": _hold_times(store, agent),

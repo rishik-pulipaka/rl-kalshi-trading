@@ -316,6 +316,61 @@ class Store:
                 "SELECT cost FROM positions WHERE agent = ?", (agent,)).fetchall()
         return [r["cost"] for r in rows]
 
+    def diversity_over_time(self, agent, days=60):
+        """Does it narrow toward a niche or stay broad? (PRD 9)
+
+        Two numbers per day, because they answer different halves of the
+        question: how many distinct categories it touched, and what share of
+        that day's positions went into its single favourite one. An agent can
+        keep touching six categories while quietly putting 90% of its money in
+        one, and only the second number shows that.
+        """
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT opened_day day, COALESCE(category,'?') category, "
+                "COUNT(*) n FROM positions WHERE agent = ? AND opened_day IS NOT NULL "
+                "GROUP BY opened_day, category ORDER BY opened_day DESC",
+                (agent,)).fetchall()
+        by_day = {}
+        for row in rows:
+            by_day.setdefault(row["day"], []).append(row["n"])
+        out = []
+        for day in sorted(by_day)[-days:]:
+            counts = by_day[day]
+            total = sum(counts)
+            out.append({"day": day, "categories": len(counts), "positions": total,
+                        "top_share": (max(counts) / total) if total else None})
+        return out
+
+    def resolution_horizon(self, agent, days=60):
+        """Does this personality prefer fast markets or slow ones? (PRD 9)
+
+        Measured at entry -- `close_ts - opened_at` -- which is the market's own
+        time to resolution, not how long the agent happened to hold it. Those
+        are different questions and the hold-time stat already answers the
+        second one.
+        """
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT opened_day day, (close_ts - opened_at) horizon "
+                "FROM positions WHERE agent = ? AND close_ts IS NOT NULL "
+                "AND opened_at IS NOT NULL AND close_ts > opened_at "
+                "ORDER BY opened_at", (agent,)).fetchall()
+        horizons = sorted(r["horizon"] for r in rows)
+        by_day = {}
+        for row in rows:
+            by_day.setdefault(row["day"], []).append(row["horizon"])
+        series = []
+        for day in sorted(by_day)[-days:]:
+            vals = sorted(by_day[day])
+            series.append({"day": day, "median_seconds": vals[len(vals) // 2],
+                           "n": len(vals)})
+        return {
+            "median_seconds": (horizons[len(horizons) // 2] if horizons else None),
+            "n": len(horizons),
+            "series": series,
+        }
+
     def exploration_over_time(self, agent, days=60):
         """Exploration-vs-exploitation ratio over time (PRD 9)."""
         with self._lock:

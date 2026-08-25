@@ -37,13 +37,32 @@ defaults:
   trading:
     decision_interval_seconds: 60     # how often the agent considers acting
     candidates_per_decision: 40       # markets sampled from the universe per tick
-    max_open_positions: 25
+    # Sized against the resolution horizon, not picked round. The cap is about
+    # attention and diversification -- actual risk is already bounded by the
+    # bankroll, since an agent cannot stake money it does not have. With the old
+    # uniform sampler it quietly became a deadlock instead: Stan filled all 25
+    # slots with markets whose median resolution was 128 days, could not open
+    # anything new, and had no way out -- with near-zero weights every held
+    # position scores the same optimism prior as every candidate, so the exit
+    # rule cannot discriminate either. Nothing resolves, nothing is learned,
+    # nothing is exited, forever. This headroom is what lets a working set of
+    # fast-resolving positions turn over alongside long-dated ones.
+    max_open_positions: 60
     min_seconds_to_close: 120         # do not enter a market about to close
     exit_check_interval_seconds: 300  # how often to reconsider open positions
     min_hold_seconds: 3600            # PRD 4's hold-time trait, and a churn guard
     exit_margin: 0.15                 # how far Q must fall below entry to exit
     combo_appetite: 0.10              # how often to build a multi-leg basket
     combo_legs: 3
+    # Measured: the tradeable universe has a MEDIAN time-to-close of 75 days,
+    # and only 5.3% of it resolves within a day. Sampled uniformly, most of an
+    # agent's capital sits in markets that cannot teach it anything for months
+    # -- in the first 18 hours of live running, all four agents together saw
+    # six real settlements. This weights discovery toward markets that resolve
+    # sooner. It is a weight, not a filter: every market stays reachable and no
+    # category is favoured, so PRD 2's market freedom is intact. Set to 0 for
+    # uniform sampling. Deliberately the same for all four -- see personality.py.
+    resolution_half_life_days: 7.0
 
   reward:
     pnl_scale: 1.0
@@ -101,7 +120,7 @@ agents:
       min_fraction: 0.01
       max_fraction: 0.04
     trading:
-      max_open_positions: 12
+      max_open_positions: 30
       min_hold_seconds: 21600   # holds longest of the four; not a churner
       exit_margin: 0.25         # needs strong evidence before abandoning a view
       combo_appetite: 0.02      # combos are a gamble; he mostly declines
@@ -138,7 +157,7 @@ agents:
       min_fraction: 0.08
       max_fraction: 0.30      # bets big
     trading:
-      max_open_positions: 30
+      max_open_positions: 70
       min_hold_seconds: 7200    # rides his positions, convinced they will come in
       exit_margin: 0.20
       combo_appetite: 0.35      # drawn to combos and long shots (PRD 4)
@@ -176,7 +195,7 @@ agents:
     trading:
       decision_interval_seconds: 30    # acts twice as often as the others
       candidates_per_decision: 60
-      max_open_positions: 40
+      max_open_positions: 90
       exit_check_interval_seconds: 120  # shortest hold times; churns positions
       min_hold_seconds: 600             # in and out fast (PRD 4)
       exit_margin: 0.05                 # bails at the first sign of trouble

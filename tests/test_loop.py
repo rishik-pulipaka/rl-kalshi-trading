@@ -511,3 +511,176 @@ def test_the_bankruptcy_event_records_how_much_was_abandoned(store, tmp_path):
     assert len(events) == 1
     assert events[0]["detail"]["abandoned"] == held
     agent.close()
+
+
+# ---------- discovery leans toward markets that resolve sooner ----------
+
+def _mixed_pool(now, fast=200, slow=200, fast_days=1.0, slow_days=400.0):
+    """Half near-term markets, half long-dated ones."""
+    pool = []
+    for i in range(fast + slow):
+        m = Market(f"KXMIX-{i}")
+        m.category, m.series = "Sports", "KXMIX"
+        m.title = f"Mixed {i}"
+        m.yes_bid, m.yes_ask = 4000, 4200
+        m.yes_bid_size = m.yes_ask_size = 10000.0
+        m.volume = m.open_interest = 100.0
+        m.updated_at = now
+        m.close_ts = now + (fast_days if i < fast else slow_days) * 86400
+        pool.append(m)
+    return pool
+
+
+def _agent(tmp_path, half_life, seed=11):
+    a = Agent(load_all()["stan"], str(tmp_path), seed=seed)
+    a.is_asleep = lambda when=None: False
+    a.p.trading.resolution_half_life_days = half_life
+    return a
+
+
+def test_discovery_prefers_markets_that_resolve_sooner(tmp_path):
+    """The measured problem: the live universe has a MEDIAN time-to-close of 75
+    days, so uniform sampling parks most of the bankroll in markets that cannot
+    teach the agent anything for months."""
+    now = time.time()
+    pool = _mixed_pool(now)
+
+    uniform = _agent(tmp_path / "u", 0)
+    weighted = _agent(tmp_path / "w", 7.0)
+
+    def fast_share(agent):
+        drawn = [m for _ in range(60) for m in agent._discover(pool, 20, now)]
+        return sum(1 for m in drawn
+                   if m.seconds_to_close(now) < 2 * 86400) / len(drawn)
+
+    u, w = fast_share(uniform), fast_share(weighted)
+    uniform.memory.close(); weighted.memory.close()
+
+    assert 0.4 < u < 0.6, f"uniform should be ~50/50, got {u:.0%}"
+    assert w > 0.9, f"weighting should strongly favour near-term, got {w:.0%}"
+
+
+def test_long_dated_markets_stay_reachable(tmp_path):
+    """A weight, not a filter. PRD 2's market freedom depends on this: nothing
+    may be excluded, only drawn less often."""
+    now = time.time()
+    # One near-term market against many long-dated ones -- if the weighting
+    # excluded rather than discounted, the slow ones would never appear.
+    pool = _mixed_pool(now, fast=1, slow=400)
+    agent = _agent(tmp_path, 7.0)
+    drawn = [m for _ in range(80) for m in agent._discover(pool, 10, now)]
+    agent.memory.close()
+
+    slow = sum(1 for m in drawn if m.seconds_to_close(now) > 100 * 86400)
+    assert slow > 0, "long-dated markets became unreachable"
+
+
+def test_discovery_never_favours_a_category(tmp_path):
+    """Time to resolution is not a category. 'Which markets does this agent
+    gravitate toward' has to stay a question about the agent."""
+    now = time.time()
+    pool = _mixed_pool(now)
+    for i, m in enumerate(pool):      # category independent of close time
+        m.category = "Sports" if i % 2 else "Politics"
+
+    agent = _agent(tmp_path, 7.0)
+    drawn = [m for _ in range(60) for m in agent._discover(pool, 20, now)]
+    agent.memory.close()
+
+    share = sum(1 for m in drawn if m.category == "Sports") / len(drawn)
+    assert 0.4 < share < 0.6, f"sampler skewed a category: {share:.0%} Sports"
+
+
+def test_turning_the_weighting_off_restores_uniform_sampling(tmp_path):
+    now = time.time()
+    pool = _mixed_pool(now)
+    agent = _agent(tmp_path, 0)
+    drawn = agent._discover(pool, 25, now)
+    agent.memory.close()
+    assert len(drawn) == 25
+    assert len({m.ticker for m in drawn}) == 25
+
+
+def test_discovery_returns_exactly_what_was_asked_for(tmp_path):
+    now = time.time()
+    pool = _mixed_pool(now)
+    agent = _agent(tmp_path, 7.0)
+    drawn = agent._discover(pool, 25, now)
+    agent.memory.close()
+    assert len(drawn) == 25
+    assert len({m.ticker for m in drawn}) == 25, "drew the same market twice"
+
+
+def test_a_market_with_no_close_time_does_not_break_discovery(tmp_path):
+    now = time.time()
+    pool = _mixed_pool(now, fast=10, slow=10)
+    for m in pool[:5]:
+        m.close_ts = None
+    agent = _agent(tmp_path, 7.0)
+    drawn = agent._discover(pool, 8, now)
+    agent.memory.close()
+    assert len(drawn) == 8
+
+
+def test_the_resolution_weighting_is_identical_for_all_four_agents():
+    """It changes how fast an agent gets feedback. Differing values would make
+    the head-to-head comparison measure the sampler, not the personalities."""
+    values = {n: p.trading.resolution_half_life_days
+              for n, p in load_all().items()}
+    assert len(set(values.values())) == 1, f"must not differ per agent: {values}"
+
+
+# ---------- the last two PRD 9 analytics ----------
+
+def _row(store, agent, day, category, horizon_days, i):
+    """Insert a position directly; these queries read the table, not the agent."""
+    now = time.time()
+    store._db.execute(
+        "INSERT INTO positions (id, agent, ticker, category, side, contracts, "
+        "cost, opened_at, opened_day, close_ts, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (f"{agent}-{day}-{i}", agent, f"T{i}", category, "yes", 1, 100,
+         now, day, now + horizon_days * 86400, "open"))
+    store._db.commit()
+
+
+def test_diversity_shows_an_agent_narrowing_toward_a_niche(store):
+    """PRD 9: does it narrow toward a niche or stay broad?"""
+    for i, cat in enumerate(("Sports", "Politics", "Crypto", "Weather")):
+        _row(store, "stan", "2026-01-01", cat, 3, i)
+    for i in range(4):                       # next day: all in one category
+        _row(store, "stan", "2026-01-02", "Sports", 3, 10 + i)
+
+    broad, narrow = store.diversity_over_time("stan")
+    assert broad["categories"] == 4 and broad["top_share"] == 0.25
+    assert narrow["categories"] == 1 and narrow["top_share"] == 1.0
+
+
+def test_diversity_catches_concentration_that_a_category_count_hides(store):
+    """Touching five categories while putting 90% into one is not diversity."""
+    _row(store, "kenny", "2026-01-01", "Politics", 3, 0)
+    for i in range(9):
+        _row(store, "kenny", "2026-01-01", "Sports", 3, 1 + i)
+    day, = store.diversity_over_time("kenny")
+    assert day["categories"] == 2
+    assert day["top_share"] == pytest.approx(0.9)
+
+
+def test_resolution_horizon_is_measured_at_entry_not_at_exit(store):
+    """This is the market's own time to resolution. How long the agent happened
+    to hold it is a different question, answered by the hold-time stat."""
+    for i, days_out in enumerate((1, 5, 400)):
+        _row(store, "cartman", "2026-01-01", "Sports", days_out, i)
+    horizon = store.resolution_horizon("cartman")
+    assert horizon["n"] == 3
+    assert horizon["median_seconds"] == pytest.approx(5 * 86400)
+
+
+def test_resolution_horizon_is_empty_before_anything_is_bought(store):
+    horizon = store.resolution_horizon("kyle")
+    assert horizon["median_seconds"] is None
+    assert horizon["n"] == 0 and horizon["series"] == []
+
+
+def test_diversity_is_empty_before_anything_is_bought(store):
+    assert store.diversity_over_time("kyle") == []

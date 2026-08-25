@@ -208,7 +208,7 @@ class Agent:
         # keeps market freedom real and what grows the working set over time.
         remaining = min(budget - len(sampled), len(pool))
         if remaining > 0:
-            sampled.extend(self.rng.sample(pool, remaining))
+            sampled.extend(self._discover(pool, remaining, now))
 
         held = {p.ticker for p in self.portfolio.open_positions()}
         candidates = []
@@ -242,6 +242,56 @@ class Agent:
                 price = feat.entry_price(market, side)
                 candidates.append(Candidate(market, side, vector, price))
         return candidates
+
+    # Oversampling factor for weighted discovery. The pool is ~100k markets and
+    # this runs on every tick for every agent, so weighting the whole pool would
+    # be wasteful. Drawing a uniform shortlist first and weighting only that is
+    # far cheaper and keeps every market reachable, because the first stage is
+    # still uniform over the entire universe.
+    DISCOVERY_OVERSAMPLE = 40
+
+    def _discover(self, pool, k, now=None):
+        """Draw `k` markets, leaning toward the ones that resolve soonest.
+
+        Why this exists: sampled uniformly, the tradeable universe has a median
+        time-to-close of **75 days** and only 5.3% of it resolves within a day.
+        An agent drawing uniformly therefore spends most of its bankroll on
+        positions that cannot produce a learning signal for months -- measured
+        over the first 18 hours live, all four agents together saw six real
+        settlements, and two thirds of the "resolutions" they did get were
+        their own exits rather than market outcomes. PRD 13 asks for the
+        learning process to be legible from day one, and it cannot be if
+        feedback arrives a quarter after the decision.
+
+        This is deliberately a **weight, not a filter**. A market a year out is
+        drawn about 50x less often than one resolving today, but it is never
+        excluded, and nothing here looks at category -- so PRD 2's market
+        freedom, and the "which markets does it gravitate toward" question,
+        both survive intact. Set `resolution_half_life_days: 0` for the old
+        uniform behaviour.
+        """
+        half_life = self.p.trading.resolution_half_life_days
+        if not half_life or half_life <= 0:
+            return self.rng.sample(pool, k)
+
+        shortlist = self.rng.sample(
+            pool, min(len(pool), max(k, k * self.DISCOVERY_OVERSAMPLE)))
+        if len(shortlist) <= k:
+            return shortlist
+
+        # A-Res weighted sampling without replacement: key each item by
+        # u**(1/w) and keep the largest k. Standard, and one pass.
+        half_life_seconds = half_life * 86400.0
+        keyed = []
+        for market in shortlist:
+            seconds = market.seconds_to_close(now)
+            if seconds is None or seconds <= 0:
+                weight = 1.0          # unknown close time: no opinion either way
+            else:
+                weight = 1.0 / (1.0 + seconds / half_life_seconds)
+            keyed.append((self.rng.random() ** (1.0 / weight), market))
+        keyed.sort(key=lambda pair: -pair[0])
+        return [market for _, market in keyed[:k]]
 
     def tick(self, universe, books=None, now=None):
         """One decision cycle. Returns the `Decision`, acted on or not."""
