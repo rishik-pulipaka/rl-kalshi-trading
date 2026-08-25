@@ -10,6 +10,14 @@
 # --- Agent state, memory, model weights, event logs ---
 # All runtime state lives under data/ and is machine-local by design (PRD 15).
 data/
+# Backstop: a test once passed "." as its data dir and wrote a live memory
+# database into the repo root, where it was committed. These patterns are
+# runtime state wherever they land.
+agents/
+*.db
+*.db-wal
+*.db-shm
+*.npz
 
 # --- Python ---
 __pycache__/

@@ -63,9 +63,14 @@ def agent(tmp_path):
 
 # ---------- candidates ----------
 
-def test_candidates_cover_both_sides_of_each_market():
-    """Buying YES and buying NO are different bets and both must be scoreable."""
-    a = Agent(load_all()["stan"], os.devnull.replace(os.devnull, "."), store=None)
+def test_candidates_cover_both_sides_of_each_market(tmp_path):
+    """Buying YES and buying NO are different bets and both must be scoreable.
+
+    Note the tmp_path: an earlier version passed "." as the data dir and wrote
+    a real agent's memory database into the repository root, where it was
+    promptly committed.
+    """
+    a = Agent(load_all()["stan"], str(tmp_path), store=None)
     try:
         candidates = a.build_candidates(FakeUniverse(n=5))
         assert len(candidates) == 10
