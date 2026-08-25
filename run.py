@@ -63,6 +63,13 @@ SETTLE_INTERVAL = 300       # check whether held markets have resolved
 HEALTH_INTERVAL = 60        # log a heartbeat and prune
 PRUNE_INTERVAL = 86400
 WARMUP_INTERVAL = 30        # top up the depth working set
+ADOPT_INTERVAL = 120        # pull listed combo markets into the universe
+
+# How many of Kalshi's auto-generated parlays to carry in the universe.
+# They are not swept up front (there are ~1.19M), but PRD 2 wants agents able
+# to TAKE a listed multi-leg combo, so a rotating sample of the ones actually
+# quoting is materialized and evaluated like any other market.
+COMBO_POOL = 1500
 
 # How many markets to carry full order-book depth for. This is the working set
 # agents actually trade out of: without it they can see 100k markets but fill
@@ -234,6 +241,7 @@ class System:
         next_health = time.time() + HEALTH_INTERVAL
         next_prune = time.time() + PRUNE_INTERVAL
         next_warmup = time.time() + 5
+        next_adopt = time.time() + 45
 
         while not self._stop.is_set():
             now = time.time()
@@ -247,6 +255,9 @@ class System:
             if now >= next_warmup:
                 self._warm_depth()
                 next_warmup = now + WARMUP_INTERVAL
+            if now >= next_adopt:
+                self._adopt_combos()
+                next_adopt = now + ADOPT_INTERVAL
             if now >= next_universe:
                 self._refresh_universe()
                 next_universe = now + UNIVERSE_REFRESH
@@ -338,6 +349,29 @@ class System:
         # interest is a fact about the market, not a preference of ours.
         candidates.sort(key=lambda m: -(m.open_interest or 0.0))
         self.stream.watch_depth([m.ticker for m in candidates[:need]])
+
+    def _adopt_combos(self):
+        """Pull a sample of Kalshi's listed parlays into the universe.
+
+        This is the "take a multi-leg combo" half of PRD 2. The ~1.19M
+        auto-generated cross-category markets are never swept, but the ones that
+        actually quote are remembered as they stream past, and a rotating sample
+        is materialized so agents can evaluate them as ordinary markets.
+        """
+        try:
+            existing = sum(1 for t in self.universe.tickers()
+                           if rest.is_auto_combo(t))
+            if existing >= COMBO_POOL:
+                return
+            sample = self.universe.unknown_sample(
+                min(300, COMBO_POOL - existing))
+            if sample:
+                added = self.universe.adopt_many(sample)
+                if added:
+                    log.info("adopted %d listed combo markets (%d held)",
+                             added, existing + added)
+        except Exception:
+            log.exception("combo adoption failed")
 
     def _refresh_universe(self):
         try:

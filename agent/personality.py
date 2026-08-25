@@ -99,6 +99,12 @@ class Trading:
     # Without this gap, anything barely worth entering is instantly worth
     # exiting, and the agent round-trips the spread for nothing.
     exit_margin: float = 0.15
+    # Chance of committing to several legs at once instead of a single bet.
+    # PRD 2 wants agents able to "construct" multi-leg combos; this is how
+    # often they choose to. Cartman is drawn to them; Kyle is not.
+    combo_appetite: float = 0.10
+    # Legs in a constructed basket.
+    combo_legs: int = 3
 
     @classmethod
     def from_dict(cls, data):

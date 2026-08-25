@@ -42,6 +42,8 @@ defaults:
     exit_check_interval_seconds: 300  # how often to reconsider open positions
     min_hold_seconds: 3600            # PRD 4's hold-time trait, and a churn guard
     exit_margin: 0.15                 # how far Q must fall below entry to exit
+    combo_appetite: 0.10              # how often to build a multi-leg basket
+    combo_legs: 3
 
   reward:
     pnl_scale: 1.0
@@ -101,6 +103,8 @@ agents:
       max_open_positions: 12
       min_hold_seconds: 21600   # holds longest of the four; not a churner
       exit_margin: 0.25         # needs strong evidence before abandoning a view
+      combo_appetite: 0.02      # combos are a gamble; he mostly declines
+      combo_legs: 2
     reward:
       exposure_penalty: 0.60  # heaviest -- punished hardest for oversizing
       drawdown_penalty: 1.00  # and for digging holes
@@ -135,6 +139,8 @@ agents:
       max_open_positions: 30
       min_hold_seconds: 7200    # rides his positions, convinced they will come in
       exit_margin: 0.20
+      combo_appetite: 0.35      # drawn to combos and long shots (PRD 4)
+      combo_legs: 4
     reward:
       exposure_penalty: 0.10  # lightest -- barely punished for oversizing
       drawdown_penalty: 0.25
@@ -171,6 +177,8 @@ agents:
       exit_check_interval_seconds: 120  # shortest hold times; churns positions
       min_hold_seconds: 600             # in and out fast (PRD 4)
       exit_margin: 0.05                 # bails at the first sign of trouble
+      combo_appetite: 0.25              # will try anything, including parlays
+      combo_legs: 3
     reward:
       exposure_penalty: 0.20
       drawdown_penalty: 0.30

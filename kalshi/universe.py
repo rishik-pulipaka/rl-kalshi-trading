@@ -23,11 +23,15 @@ the universe honest without any incremental-diffing machinery.
 ## Auto-generated combos
 
 Those ~1.19M parlays are still *reachable*: they stream in on `ticker` like
-everything else, and `adopt()` pulls any one of them into the universe on
-demand. They are simply not materialized up front, because holding 1.29M market
-objects to represent combinations of markets we already hold is waste, not
-freedom. Every market a human would recognize as a market is here from the
-start, in every category, with no filtering.
+everything else, a bounded sample of the ones actually quoting is kept in
+`_unknown`, and `adopt_many()` pulls a batch into the universe on demand -- at
+which point an agent evaluates a Kalshi combo exactly as it evaluates any other
+market. That is the "take a multi-leg combo" half of PRD 2.
+
+They are not materialized up front because holding 1.29M market objects to
+represent combinations of markets we already hold is waste, not freedom. Every
+market a human would recognize as a market is here from the start, in every
+category, with no filtering.
 
 ## Prices
 
@@ -37,6 +41,8 @@ parsing once on ingest keeps floats out of the hot path and out of comparisons.
 """
 
 import time
+import random
+import collections
 import threading
 
 from . import rest
@@ -55,6 +61,14 @@ TRADEABLE_STATUS = "active"
 # quoted at exactly 0 or 10000 is not a real quote -- it means nobody is there.
 PRICE_MIN = 0
 PRICE_MAX = 10000
+
+# How many un-materialized tickers to keep a handle on. These are Kalshi's
+# auto-generated parlays: ~1.19M exist, so this is a sampling window rather
+# than an index.
+UNKNOWN_RESERVOIR = 4000
+
+# Batch size for `adopt_many`. The /markets?tickers=a,b,c form is verified.
+ADOPT_BATCH = 100
 
 
 def to_price_key(value):
@@ -177,6 +191,12 @@ class Universe:
         # space). Counted so we can report the real size of what's out there.
         self.unknown_ticker_updates = 0
         self.lifecycle_events = 0
+        # A bounded sample of those un-materialized tickers, so `adopt_many`
+        # has something to pull from. Bounded because there are ~1.19M of them
+        # and holding every ticker string would defeat the point of not
+        # materializing them. Only ones that are actually trading get in --
+        # a parlay nobody has quoted is not a market an agent could take.
+        self._unknown = collections.OrderedDict()
 
     # ---------- population ----------
 
@@ -228,6 +248,51 @@ class Universe:
             self._markets[ticker] = market
             return market
 
+    def unknown_sample(self, n, rng=None):
+        """A sample of tradeable markets we have seen but not materialized.
+
+        This is how the ~1.19M auto-generated parlay space stays reachable
+        (PRD 2: agents may "take" multi-leg combos). Only markets that have
+        actually quoted are in here.
+        """
+        with self._lock:
+            pool = [t for t in self._unknown if t not in self._markets]
+        if not pool:
+            return []
+        n = min(n, len(pool))
+        return (rng or random).sample(pool, n)
+
+    def adopt_many(self, tickers, session=None):
+        """Materialize several markets at once, batched.
+
+        Used to pull listed parlays into the universe so they become ordinary
+        candidates -- the agent then evaluates a Kalshi combo exactly as it
+        evaluates anything else, which is the point.
+        """
+        tickers = [t for t in tickers if t]
+        added = 0
+        for i in range(0, len(tickers), ADOPT_BATCH):
+            batch = tickers[i:i + ADOPT_BATCH]
+            try:
+                data = rest._get("/markets", {"tickers": ",".join(batch),
+                                              "limit": ADOPT_BATCH},
+                                 session=session)
+            except Exception:
+                continue
+            for row in data.get("markets", []):
+                ticker = row.get("ticker")
+                if not ticker:
+                    continue
+                with self._lock:
+                    market = self._markets.get(ticker)
+                    if market is None:
+                        market = self._markets[ticker] = Market(ticker)
+                        added += 1
+                        market.category = market.category or "Combo"
+                    _apply_rest_row(market, row)
+                    self._unknown.pop(ticker, None)
+        return added
+
     # ---------- live stream application ----------
 
     def on_message(self, message):
@@ -253,8 +318,14 @@ class Universe:
             market = self._markets.get(ticker)
             if market is None:
                 # An auto-generated combo, or a market opened since the last
-                # sweep. Not materialized -- see the module docstring.
+                # sweep. Not materialized -- see the module docstring -- but
+                # remembered so an agent can pull it in on demand.
                 self.unknown_ticker_updates += 1
+                ask = to_price_key(msg.get("yes_ask_dollars"))
+                if ask is not None and PRICE_MIN < ask < PRICE_MAX:
+                    self._unknown[ticker] = None
+                    if len(self._unknown) > UNKNOWN_RESERVOIR:
+                        self._unknown.popitem(last=False)
                 return
             market.yes_bid = to_price_key(msg.get("yes_bid_dollars"))
             market.yes_ask = to_price_key(msg.get("yes_ask_dollars"))
@@ -349,6 +420,7 @@ class Universe:
             "last_sweep_at": self.last_sweep_at,
             "last_sweep_seconds": self.last_sweep_seconds,
             "unknown_ticker_updates": self.unknown_ticker_updates,
+            "unknown_reservoir": len(self._unknown),
             "lifecycle_events": self.lifecycle_events,
         }
 

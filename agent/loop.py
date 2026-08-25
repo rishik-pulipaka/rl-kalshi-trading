@@ -58,6 +58,28 @@ later when its snapshot lands.
 This is also what makes the depth tier track real attention rather than a
 hand-picked list.
 
+## Multi-leg combos, both kinds (PRD 2)
+
+An agent can **take** a listed combo and **construct** one, and they are not the
+same thing.
+
+*Taking* one is free: Kalshi's ~1.19M auto-generated cross-category parlays are
+pulled into the universe by `Universe.adopt_many` and then evaluated exactly
+like any other market. A genuine all-or-nothing instrument, priced by the
+exchange.
+
+*Constructing* one produces a **basket**: several legs committed to as one
+decision, sized as one stake, attributed together. Each leg still settles on its
+own -- you cannot manufacture all-or-nothing payoff by buying legs separately,
+and pretending otherwise would invent a payoff the exchange does not offer (see
+`sim/portfolio.py`).
+
+A basket is scored as the mean Q of its legs, which is the honest number: the
+legs resolve independently, so the expected return of the bundle is the average
+of theirs. Each leg trains the model on its own realized outcome.
+
+How often an agent builds one is `combo_appetite` -- Cartman 0.35, Kyle 0.02.
+
 ## Learning happens on resolution, not on entry
 
 Each position carries the feature vector from the moment it was opened. When it
@@ -232,7 +254,14 @@ class Agent:
         decision = self.policy.select(candidates)
 
         if decision.acted:
-            self._enter(decision, books)
+            # Sometimes commit to several legs at once rather than one bet.
+            # Personality decides how often (PRD 2, 4).
+            if (self.p.trading.combo_appetite > 0
+                    and self.rng.random() < self.p.trading.combo_appetite
+                    and len(candidates) >= self.p.trading.combo_legs):
+                self._enter_basket(decision, candidates, books)
+            else:
+                self._enter(decision, books)
         if self.store:
             market = decision.candidate.market if decision.acted else None
             side = decision.candidate.side if decision.acted else None
@@ -289,6 +318,82 @@ class Agent:
                  candidate.side, market.ticker, fill.contracts, fill.avg_price,
                  decision.q, ", explore" if decision.explored else "")
         return position
+
+    def _enter_basket(self, decision, candidates, books=None):
+        """Commit to several legs as one decision (PRD 2: "construct" a combo).
+
+        The stake is split across the legs, so a basket is not a way to bet more
+        -- it is a way to bet the same amount on a conjunction. Legs are the
+        top-scoring distinct markets, because committing twice to the same
+        market is just a bigger single bet wearing a hat.
+        """
+        legs = self._pick_legs(candidates, self.p.trading.combo_legs)
+        if len(legs) < 2:
+            return self._enter(decision, books)      # not enough to bundle
+
+        total_stake = self.p.sizing.sample(self.rng, self.portfolio.bankroll)
+        per_leg = total_stake // len(legs)
+        if per_leg <= 0:
+            decision.candidate = None
+            decision.skipped_reason = "stake_too_small"
+            return None
+
+        basket = self.portfolio.open_basket(
+            self.day, features=decision.candidate.features,
+            label=f"{len(legs)}-leg")
+
+        opened = []
+        for candidate in legs:
+            market = candidate.market
+            wanted = money.max_contracts_affordable(per_leg, candidate.price)
+            if wanted <= 0:
+                continue
+            book = books.get(market.ticker) if books else None
+            levels = (fills.levels_from_book(book, candidate.side) if book
+                      else fills.levels_from_quote(market, candidate.side))
+            fill = fills.buy(levels, wanted, candidate.side)
+            if not fill.filled or not self.portfolio.can_afford(fill.cost):
+                self.depth_wanted.add(market.ticker)
+                continue
+            position = self.portfolio.open_position(
+                market.ticker, candidate.side, fill, self.day,
+                features=candidate.features, basket_id=basket.id,
+                category=market.category, series=market.series,
+                close_ts=market.close_ts)
+            opened.append(position)
+            self.trades_today += 1
+            self.depth_wanted.add(market.ticker)
+            if self.store:
+                self.store.upsert_position(position, title=market.title,
+                                           q_at_entry=decision.q,
+                                           explored=decision.explored)
+
+        if not opened:
+            decision.candidate = None
+            decision.skipped_reason = "no_liquidity"
+            return None
+
+        log.info("%s built a %d-leg basket %s (q=%.3f%s)", self.name,
+                 len(opened), basket.id, decision.q,
+                 ", explore" if decision.explored else "")
+        if self.store:
+            self.store.log_event("basket", self.name,
+                                 {"id": basket.id, "legs": len(opened),
+                                  "stake": total_stake}, self.day)
+        return basket
+
+    def _pick_legs(self, candidates, n):
+        """The best-scoring candidates, one per market."""
+        scored = sorted(candidates, key=lambda c: -self.policy.q(c.features))
+        legs, seen = [], set()
+        for candidate in scored:
+            if candidate.market.ticker in seen:
+                continue
+            seen.add(candidate.market.ticker)
+            legs.append(candidate)
+            if len(legs) >= n:
+                break
+        return legs
 
     # ---------- exits ----------
 
