@@ -64,6 +64,16 @@ HEALTH_INTERVAL = 60        # log a heartbeat and prune
 PRUNE_INTERVAL = 86400
 WARMUP_INTERVAL = 30        # top up the depth working set
 ADOPT_INTERVAL = 120        # pull listed combo markets into the universe
+SAVE_INTERVAL = 60          # checkpoint agent state
+
+# PRD 11 requires that a crash or reboot not wipe learning progress. Memory and
+# the activity log write through to SQLite continuously, but bankroll, open
+# positions, and model weights live in memory between checkpoints -- and until
+# this existed they were only written at day rollover.
+#
+# A hard kill mid-session was the test that caught it: the heartbeat showed
+# Stan at $96.64 and Kenny at $85.41, and every state.json on disk still said
+# $100.00 with zero trades. A full day of trading and learning, gone.
 
 # How many of Kalshi's auto-generated parlays to carry in the universe.
 # They are not swept up front (there are ~1.19M), but PRD 2 wants agents able
@@ -266,6 +276,7 @@ class System:
         next_prune = time.time() + PRUNE_INTERVAL
         next_warmup = time.time() + 5
         next_adopt = time.time() + 45
+        next_save = time.time() + SAVE_INTERVAL
 
         while not self._stop.is_set():
             now = time.time()
@@ -285,6 +296,9 @@ class System:
             if now >= next_universe:
                 self._refresh_universe()
                 next_universe = now + UNIVERSE_REFRESH
+            if now >= next_save:
+                self._checkpoint()
+                next_save = now + SAVE_INTERVAL
             if now >= next_health:
                 self._heartbeat()
                 next_health = now + HEALTH_INTERVAL
@@ -413,6 +427,18 @@ class System:
         if position.side == "yes":
             return market.yes_bid if market.can_buy_no else None
         return money.no_price(market.yes_ask) if market.can_buy_yes else None
+
+    def _checkpoint(self):
+        """Persist every agent's state (PRD 11).
+
+        Writes are atomic (temp file plus replace), so a crash during a
+        checkpoint leaves the previous good state rather than a truncated file.
+        """
+        for agent in self.agents:
+            try:
+                agent.save()
+            except Exception:
+                log.exception("%s failed to checkpoint", agent.name)
 
     def _heartbeat(self):
         health = self.stream.health()

@@ -373,6 +373,16 @@ class Agent:
             decision.skipped_reason = "no_liquidity"
             return None
 
+        if len(opened) == 1:
+            # Only one leg could be filled. That is a single bet, not a basket,
+            # and labelling it as one would put a "1-leg basket" in the activity
+            # feed and make the combo analytics lie about what the agent did.
+            opened[0].basket_id = None
+            self.portfolio.baskets.pop(basket.id, None)
+            if self.store:
+                self.store.upsert_position(opened[0])
+            return opened[0]
+
         log.info("%s built a %d-leg basket %s (q=%.3f%s)", self.name,
                  len(opened), basket.id, decision.q,
                  ", explore" if decision.explored else "")

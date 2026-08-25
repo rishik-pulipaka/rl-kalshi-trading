@@ -221,3 +221,21 @@ def test_a_basket_is_logged_as_one_event(tmp_path):
     assert events[0]["detail"]["legs"] >= 2
     a.close()
     store.close()
+
+
+def test_a_single_filled_leg_is_not_recorded_as_a_basket(agent):
+    """Seen live: "stan built a 1-leg basket".
+
+    If only one leg fills, that is a single bet. Calling it a basket puts a
+    nonsense row in the activity feed and makes the combo analytics lie.
+    """
+    agent.p.trading.combo_appetite = 1.0
+    agent.p.trading.combo_legs = 3
+    # A universe with exactly one tradeable market: only one leg can fill.
+    universe = FakeUniverse(n=1)
+    agent.tick(universe)
+
+    positions = agent.portfolio.open_positions()
+    assert len(positions) == 1
+    assert positions[0].basket_id is None
+    assert agent.portfolio.baskets == {}
